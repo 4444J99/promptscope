@@ -1,0 +1,16 @@
+{
+  "name": "promptscope",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "description": "Free + paid LLM system-prompt analyzer. Cloudflare Pages + Workers AI.",
+  "scripts": {
+    "dev": "wrangler pages dev public --compatibility-date=2026-04-01 --compatibility-flags=nodejs_compat",
+    "deploy": "wrangler pages deploy public --project-name=promptscope --commit-dirty=true",
+    "kv:create": "scripts/kv-bootstrap.sh"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "typescript": "^5.5.0"
+  }
+}
