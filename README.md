@@ -1,75 +1,68 @@
 # PromptScope
 
-Free + paid LLM system-prompt analyzer. Paste a system prompt; get back a structured critique — anti-patterns, score, suggested rewrite.
+> Free + paid LLM system-prompt analyzer. Paste a system prompt; get a structured critique — anti-patterns, score, suggested rewrite.
 
-Live: **promptscope.pages.dev** (deploying)
+**Live:** https://promptscope.ivixivi.workers.dev
 
 ## What it does
 
-Reads your LLM system prompt and returns:
+Reads an LLM system prompt and returns:
 
 - **Score (0–10)** — how production-ready it is
-- **Anti-patterns** — specific issues like vague instructions, missing output schemas, persona-before-task, capability over-claims
+- **Anti-patterns** — vague instructions, missing output schemas, persona-before-task, capability over-claims
 - **Strengths** — what the prompt is doing well
-- **Suggested rewrite** (Pro tier) — a structurally improved version preserving original intent
+- **Suggested rewrite** (Pro tier) — a structurally improved version preserving intent
 
-Runs on Cloudflare Workers AI. No third-party LLM provider; your prompt is not stored unless you generate a share-link.
+Runs on Cloudflare Workers AI. The prompt is not stored unless a share-link is generated.
 
 ## Pricing
 
-| | Free | Pro |
-|---|---|---|
-| Analyses per day | 5 | Unlimited |
-| Suggested rewrites | — | ✓ |
-| API access | — | ✓ |
-| Shareable permalinks | ✓ | ✓ |
-| Side-by-side comparison | — | ✓ |
-| Team workspace | — | ✓ |
-| Price | $0 | **$19 / month** |
+|                            | Free | Pro |
+|----------------------------|------|-----|
+| Analyses per day           | 5    | Unlimited |
+| Suggested rewrites         | —    | ✓ |
+| API access                 | —    | ✓ |
+| Shareable permalinks       | ✓    | ✓ |
+| Side-by-side comparison    | —    | ✓ |
+| Team workspace             | —    | ✓ |
+| **Price**                  | $0   | **$19 / month** |
+
+**Pay any rail:** GitHub Sponsors, crypto, BMC, latent Stripe.
 
 ## Stack
 
-- Cloudflare Pages (static frontend)
-- Cloudflare Pages Functions (`functions/api/*`)
-- Cloudflare Workers AI (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`)
-- Cloudflare KV (rate limiting, share permalinks, pro tokens)
-- Stripe Checkout for Pro subscriptions
-- USDC on Base as crypto fallback
+- Cloudflare Workers (compute + assets)
+- Cloudflare Workers AI — `@cf/meta/llama-3.3-70b-instruct-fp8-fast`
+- Cloudflare KV — rate limiting, share permalinks, pro authValues
+- Stripe Checkout (latent) for Pro subscriptions
+- USDC for crypto fallback
 
-## Develop
+## Self-host
 
-```bash
-pnpm install
-pnpm run dev
-# visit http://localhost:8788
-```
-
-## Deploy
-
-One-time setup:
+PromptScope is MIT-licensed. Fork the repo, deploy to your own Cloudflare account.
+The whole thing runs on Cloudflare's free tier for low traffic; Workers AI has a
+daily free quota that covers light hobbyist use.
 
 ```bash
-# Create KV namespaces (records IDs to wrangler.toml)
+# Create KV namespaces (record IDs to wrangler.toml)
 wrangler kv namespace create RATE_KV
 wrangler kv namespace create SHARE_KV
 wrangler kv namespace create PROMPTSCOPE_PRO_TOKENS
 
-# Set secrets
-wrangler pages secret put STRIPE_SECRET_KEY --project-name=promptscope
-wrangler pages secret put STRIPE_PRICE_ID_PRO --project-name=promptscope
-wrangler pages secret put CRYPTO_PAY_ADDRESS --project-name=promptscope
+# Deploy
+wrangler deploy
 ```
 
-Recurring deploy:
+## Sister products
 
-```bash
-pnpm run deploy
-```
+PromptScope is part of an intelligence portfolio:
 
-## Self-host
-
-PromptScope is MIT-licensed. Fork the repo, deploy to your own Cloudflare account. The whole thing runs on Cloudflare's free tier for low traffic; Workers AI has a daily free quota that covers light hobbyist use.
+- [EdgarFlash](https://edgarflash.ivixivi.workers.dev) — Real-time SEC EDGAR alerts
+- [WriteLens](https://writelens.ivixivi.workers.dev) — Pay-per-call text quality scoring
+- [BountyScope](https://bountyscope.ivixivi.workers.dev) — Bug-bounty intel + smart-contract analyzer
+- [TrendPulse](https://trendpulse.ivixivi.workers.dev) — Daily emerging-tech digest
+- [VulnPulse](https://vulnpulse.ivixivi.workers.dev) — Defender-side CVE feed
 
 ## License
 
-MIT — © 2026 PromptScope contributors.
+MIT — see [LICENSE](./LICENSE).
