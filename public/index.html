@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromptScope — analyze your LLM system prompts</title>
+<meta name="description" content="Paste a system prompt and get back a structured analysis: anti-patterns, token count, score, suggested fixes. Free tier 5 analyses/day. Built for AI engineers shipping production prompts.">
+<meta property="og:title" content="PromptScope">
+<meta property="og:description" content="Free LLM prompt analyzer. Catches anti-patterns, suggests fixes.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://promptscope.pages.dev">
+<meta name="twitter:card" content="summary">
+<link rel="stylesheet" href="/styles.css">
+<link rel="canonical" href="https://promptscope.pages.dev/">
+<script type="application/ld+json">
+{
+  "@context":"https://schema.org",
+  "@type":"WebApplication",
+  "name":"PromptScope",
+  "applicationCategory":"DeveloperApplication",
+  "offers":[
+    {"@type":"Offer","price":"0","priceCurrency":"USD","name":"Free"},
+    {"@type":"Offer","price":"19","priceCurrency":"USD","name":"Pro / month"}
+  ],
+  "description":"LLM system-prompt analyzer. Identifies anti-patterns, scores quality, suggests rewrites."
+}
+</script>
+</head>
+<body>
+<header>
+  <h1>PromptScope</h1>
+  <p class="tagline">Paste an LLM system prompt. Get a structured critique.</p>
+</header>
+
+<main>
+  <section id="analyzer">
+    <textarea id="prompt-input" placeholder="Paste your system prompt here…
+e.g.,
+&quot;You are a helpful assistant. Be friendly. Answer the user's questions in a way that is helpful and accurate.&quot;"
+              spellcheck="false"></textarea>
+
+    <div class="controls">
+      <button id="analyze-btn">Analyze</button>
+      <span id="quota" class="quota">5 free analyses / day</span>
+    </div>
+  </section>
+
+  <section id="results" hidden>
+    <div class="score-card">
+      <div class="score-num" id="score-num">—</div>
+      <div class="score-label">/10</div>
+    </div>
+    <div class="metrics">
+      <span class="metric">Tokens: <strong id="token-count">—</strong></span>
+      <span class="metric">Char count: <strong id="char-count">—</strong></span>
+    </div>
+
+    <h2>Anti-patterns</h2>
+    <ul id="anti-patterns" class="finding-list"></ul>
+
+    <h2>Strengths</h2>
+    <ul id="strengths" class="finding-list good"></ul>
+
+    <h2>Suggested rewrite <span class="lock-tag" id="rewrite-lock" hidden>(Pro)</span></h2>
+    <pre id="rewrite-block" class="rewrite"></pre>
+
+    <div id="share-row" class="share-row">
+      <button id="share-btn">Get shareable link</button>
+      <input id="share-link" type="text" readonly hidden>
+    </div>
+  </section>
+
+  <section id="upgrade" class="upgrade-card">
+    <h2>PromptScope Pro — $19 / month</h2>
+    <ul>
+      <li>Unlimited analyses (free is 5/day per IP)</li>
+      <li>Suggested rewrites for every analysis</li>
+      <li>API access for your CI / prompt-pipelines</li>
+      <li>Side-by-side comparison of two prompt versions</li>
+      <li>Team workspace for shared review</li>
+    </ul>
+    <button id="upgrade-btn">Get Pro</button>
+    <p class="alt-pay">Or pay with crypto (USDC on Base): <code id="crypto-addr">checking…</code></p>
+  </section>
+
+  <section id="why">
+    <h2>Why PromptScope</h2>
+    <p>System prompts get written once and forgotten. Six months later they're full of contradictions, dead instructions, anti-patterns the model is silently working around. PromptScope reads your prompt with a model trained to find those issues — fast, cheap, and unsentimental.</p>
+    <p>Built for: AI engineers shipping production prompts • Teams maintaining prompt libraries • Researchers iterating on prompt designs.</p>
+  </section>
+
+  <section id="faq">
+    <h2>FAQ</h2>
+    <details><summary>Is my prompt sent to a third party?</summary><p>Analysis runs on Cloudflare Workers AI (Llama 3.3 / Mistral). Prompts are not stored unless you use the share-link feature, which creates an opaque permalink visible only to those you share with. Default: ephemeral, no logging.</p></details>
+    <details><summary>What anti-patterns does it look for?</summary><p>Vague instructions, role contradictions, missing output schemas, persona-before-task ordering, capability over-claims, walls-of-text without structure, missing examples, missing constraints, hidden tool-use assumptions.</p></details>
+    <details><summary>Why a paid tier?</summary><p>The free tier covers light usage. Pro funds the inference compute and pays for ongoing development. Pro users also get the rewrite suggestions, API access, and team features.</p></details>
+    <details><summary>Open source?</summary><p>Yes — <a href="https://github.com/4444J99/promptscope" rel="noopener">github.com/4444J99/promptscope</a> (MIT). Self-host if you prefer.</p></details>
+  </section>
+</main>
+
+<footer>
+  <p>PromptScope • <a href="https://github.com/4444J99/promptscope">GitHub</a> • <a href="/api">API</a> • <a href="/privacy">Privacy</a></p>
+  <p style="margin-top:10px">Sister products:</p>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px">
+    <a style="background:#fff;border:1px solid #e5e7eb;padding:4px 10px;border-radius:14px;font-size:12px;text-decoration:none;color:#111" href="https://edgarflash.ivixivi.workers.dev">EdgarFlash</a>
+    <a style="background:#fff;border:1px solid #e5e7eb;padding:4px 10px;border-radius:14px;font-size:12px;text-decoration:none;color:#111" href="https://writelens.ivixivi.workers.dev">WriteLens</a>
+    <a style="background:#fff;border:1px solid #e5e7eb;padding:4px 10px;border-radius:14px;font-size:12px;text-decoration:none;color:#111" href="https://bountyscope.ivixivi.workers.dev">BountyScope</a>
+    <a style="background:#fff;border:1px solid #e5e7eb;padding:4px 10px;border-radius:14px;font-size:12px;text-decoration:none;color:#111" href="https://trendpulse.ivixivi.workers.dev">TrendPulse</a>
+    <a style="background:#fff;border:1px solid #e5e7eb;padding:4px 10px;border-radius:14px;font-size:12px;text-decoration:none;color:#111" href="https://vulnpulse.ivixivi.workers.dev">VulnPulse</a>
+  </div>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
