@@ -137,6 +137,26 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .upgrade-card .alt-pay { color: var(--muted); font-size: 13px; margin-top: 12px; }
 .upgrade-card code { font-family: ui-monospace, monospace; background: var(--card); padding: 2px 6px; border-radius: 4px; }
 
+.rails {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  font-size: 13px;
+}
+.rails .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rails .row:last-child { border: 0; }
+.rails .label { color: var(--muted); min-width: 120px; }
+.rails .val { font-family: ui-monospace, monospace; font-size: 12px; color: var(--fg); word-break: break-all; }
+
 #why p { margin: 8px 0; color: var(--muted); }
 
 #faq details {
