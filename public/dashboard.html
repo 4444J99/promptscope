@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromptScope — usage dashboard</title>
+<meta name="description" content="Live usage and status metrics for PromptScope: analyses, Pro conversions, share links, and rate-limit pressure.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>Dashboard</h1>
+  <p class="tagline">PromptScope usage &amp; status</p>
+</header>
+
+<main>
+  <section id="dash-meta" class="dash-meta">
+    <span id="dash-status" aria-live="polite">Loading metrics…</span>
+    <button id="refresh-btn" class="secondary" type="button">Refresh</button>
+  </section>
+
+  <section id="dash-error" class="dash-error" hidden></section>
+
+  <section id="dash-cards" class="stat-grid" hidden>
+    <div class="stat-card">
+      <div class="stat-label">Analyses today</div>
+      <div class="stat-value" id="stat-today">—</div>
+      <div class="stat-sub" id="stat-today-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total analyses</div>
+      <div class="stat-value" id="stat-total">—</div>
+      <div class="stat-sub" id="stat-total-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Pro share</div>
+      <div class="stat-value" id="stat-pro">—</div>
+      <div class="stat-sub" id="stat-pro-sub">of all analyses</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Share links</div>
+      <div class="stat-value" id="stat-shares">—</div>
+      <div class="stat-sub" id="stat-shares-sub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Rewrites generated</div>
+      <div class="stat-value" id="stat-rewrites">—</div>
+      <div class="stat-sub">Pro feature</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Tokens analyzed</div>
+      <div class="stat-value" id="stat-tokens">—</div>
+      <div class="stat-sub">approx, cumulative</div>
+    </div>
+  </section>
+
+  <section id="dash-chart" hidden>
+    <h2 id="chart-title">Analyses — last 14 days</h2>
+    <div class="chart" id="chart"></div>
+  </section>
+
+  <section id="dash-ops" class="ops-table" hidden>
+    <h2>Operational counters</h2>
+    <table>
+      <thead><tr><th>Metric</th><th>Today</th><th>All time</th></tr></thead>
+      <tbody id="ops-body"></tbody>
+    </table>
+  </section>
+</main>
+
+<footer>
+  <p>PromptScope • <a href="/">Home</a> • <a href="/api/stats">Raw JSON</a> • <a href="/api">API</a></p>
+</footer>
+
+<script src="/dashboard.js"></script>
+</body>
+</html>

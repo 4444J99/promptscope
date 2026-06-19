@@ -55,6 +55,19 @@ interface ApiKeyAuth {
   isPro: boolean;
 }
 
+// --- Usage metrics ---------------------------------------------------------
+// Lightweight counters stored in RATE_KV (prefix `m:`, distinct from rate-limit
+// keys `rl:`). Increments are best-effort and non-atomic — fine for an
+// approximate status/usage dashboard on a low-traffic Worker, and consistent
+// with how rate limiting already does read-then-write.
+const METRIC_TTL_SECONDS = 60 * 60 * 24 * 60; // per-day blobs kept ~60 days
+const STATS_WINDOW_DAYS = 14; // days of history returned by /api/stats
+const METRIC_ALL_KEY = 'm:all'; // cumulative totals (no TTL)
+const METRIC_META_KEY = 'm:meta'; // { since: 'YYYY-MM-DD' }
+const metricDayKey = (date: string) => `m:day:${date}`;
+
+type MetricCounts = Record<string, number>;
+
 const SYSTEM_PROMPT = `You are PromptScope, an expert in LLM system-prompt design.
 
 You analyze a system prompt and return JSON with this exact shape:
@@ -124,6 +137,52 @@ interface LicenseAccess {
 }
 
 function approxTokens(s: string): number { return Math.ceil(s.length / 4); }
+
+function todayUtc(): string { return new Date().toISOString().slice(0, 10); }
+
+function parseCounts(raw: string | null): MetricCounts {
+  if (!raw) return {};
+  try {
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' ? obj as MetricCounts : {};
+  } catch { return {}; }
+}
+
+async function addCounts(env: Env, key: string, deltas: MetricCounts, ttl?: number): Promise<void> {
+  const counts = parseCounts(await env.RATE_KV.get(key).catch(() => null));
+  for (const [name, delta] of Object.entries(deltas)) {
+    counts[name] = (counts[name] ?? 0) + delta;
+  }
+  const opts = ttl ? { expirationTtl: ttl } : undefined;
+  await env.RATE_KV.put(key, JSON.stringify(counts), opts).catch(() => undefined);
+}
+
+async function recordSince(env: Env, date: string): Promise<void> {
+  const existing = await env.RATE_KV.get(METRIC_META_KEY).catch(() => null);
+  if (existing) return;
+  await env.RATE_KV.put(METRIC_META_KEY, JSON.stringify({ since: date })).catch(() => undefined);
+}
+
+// Fire-and-forget counter increments. Bundled onto ctx.waitUntil so they never
+// add latency to the user-facing response.
+function bumpMetrics(env: Env, ctx: ExecutionContext, deltas: MetricCounts): void {
+  if (Object.keys(deltas).length === 0) return;
+  const date = todayUtc();
+  ctx.waitUntil(Promise.all([
+    addCounts(env, METRIC_ALL_KEY, deltas),
+    addCounts(env, metricDayKey(date), deltas, METRIC_TTL_SECONDS),
+    recordSince(env, date),
+  ]).then(() => undefined));
+}
+
+function recentDates(days: number): string[] {
+  const out: string[] = [];
+  const now = Date.parse(`${todayUtc()}T00:00:00Z`);
+  for (let i = days - 1; i >= 0; i--) {
+    out.push(new Date(now - i * 86_400_000).toISOString().slice(0, 10));
+  }
+  return out;
+}
 
 function tryParseJson(s: unknown): any | null {
   if (s == null) return null;
@@ -430,7 +489,7 @@ function newId(): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function handleAnalyze(req: Request, env: Env): Promise<Response> {
+async function handleAnalyze(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       description: 'PromptScope analyze API',
@@ -468,6 +527,7 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
       : `ip:${req.headers.get('cf-connecting-ip') ?? 'unknown'}`;
     const rl = await rateCheck(bucket, env);
     if (!rl.allowed) {
+      bumpMetrics(env, ctx, { rate_limited: 1 });
       return Response.json({
         error: 'daily free quota exhausted; upgrade to Pro for unlimited analysis',
         upgrade_url: upgradeHref(env),
@@ -517,6 +577,13 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
     }
   }
 
+  bumpMetrics(env, ctx, {
+    analyze: 1,
+    [isPro ? 'analyze_pro' : 'analyze_free']: 1,
+    tokens: approxTokens(prompt),
+    ...(suggested_rewrite ? { rewrite: 1 } : {}),
+  });
+
   const licenseInfo = publicLicense(licenseAccess);
   return Response.json({
     score: Math.max(0, Math.min(10, parsed.score)),
@@ -544,7 +611,7 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
   });
 }
 
-async function handleLicense(req: Request, env: Env): Promise<Response> {
+async function handleLicense(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       auth_header: 'x-promptscope-license',
@@ -559,6 +626,7 @@ async function handleLicense(req: Request, env: Env): Promise<Response> {
   if (!body) return Response.json({ error: 'invalid JSON' }, { status: 400 });
 
   const access = await validateLemonLicense(normalizeLicenseKey(body.license_key ?? body.licenseKey), env);
+  bumpMetrics(env, ctx, { [access.isPro ? 'license_valid' : 'license_invalid']: 1 });
   const status = access.isPro ? 200 : 401;
   const licenseInfo = publicLicense(access);
   return Response.json({
@@ -569,7 +637,7 @@ async function handleLicense(req: Request, env: Env): Promise<Response> {
   }, { status });
 }
 
-async function handleShare(req: Request, env: Env): Promise<Response> {
+async function handleShare(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (req.method === 'POST') {
     let body: any;
     try { body = await req.json(); } catch { return Response.json({ error: 'invalid JSON' }, { status: 400 }); }
@@ -578,6 +646,7 @@ async function handleShare(req: Request, env: Env): Promise<Response> {
     if (prompt.length > MAX_PROMPT_CHARS) return Response.json({ error: 'prompt too long' }, { status: 400 });
     const id = newId();
     await env.SHARE_KV.put(id, prompt, { expirationTtl: SHARE_TTL_SECONDS });
+    bumpMetrics(env, ctx, { share_created: 1 });
     return Response.json({ id, expires_in_seconds: SHARE_TTL_SECONDS });
   }
   if (req.method === 'GET') {
@@ -649,6 +718,38 @@ async function handleKeys(req: Request, env: Env): Promise<Response> {
   return new Response('method not allowed', { status: 405 });
 }
 
+async function handleStats(req: Request, env: Env): Promise<Response> {
+  if (req.method !== 'GET') return new Response('method not allowed', { status: 405 });
+
+  const dates = recentDates(STATS_WINDOW_DAYS);
+  const [totalsRaw, metaRaw, ...dayRaws] = await Promise.all([
+    env.RATE_KV.get(METRIC_ALL_KEY).catch(() => null),
+    env.RATE_KV.get(METRIC_META_KEY).catch(() => null),
+    ...dates.map(d => env.RATE_KV.get(metricDayKey(d)).catch(() => null)),
+  ]);
+
+  const totals = parseCounts(totalsRaw);
+  const daily = dates.map((date, i) => ({ date, ...parseCounts(dayRaws[i]) }));
+  const today = daily[daily.length - 1] ?? { date: todayUtc() };
+
+  let since: string | undefined;
+  try { since = metaRaw ? JSON.parse(metaRaw)?.since : undefined; } catch {}
+
+  return Response.json({
+    generated_at: new Date().toISOString(),
+    since: since ?? null,
+    window_days: STATS_WINDOW_DAYS,
+    metrics: ['analyze', 'analyze_free', 'analyze_pro', 'rewrite', 'tokens', 'share_created', 'rate_limited', 'license_valid', 'license_invalid'],
+    totals,
+    today,
+    daily,
+    config: {
+      free_daily_limit: FREE_DAILY_LIMIT,
+      pro_checkout_configured: Boolean(upgradeUrl(env)),
+    },
+  }, { headers: { 'cache-control': 'public, max-age=60' } });
+}
+
 function handleApiIndex(env: Env): Response {
   return Response.json({
     name: 'PromptScope API',
@@ -658,7 +759,9 @@ function handleApiIndex(env: Env): Response {
       keys: 'GET|POST|DELETE /api/keys (admin)',
       share: 'POST /api/share',
       checkout: 'GET /api/checkout',
+      stats: 'GET /api/stats',
     },
+    dashboard: '/dashboard',
     free_limit: '5 / day (per API key, else per IP)',
     auth: {
       api_key_header: 'x-promptscope-api-key',
@@ -674,11 +777,17 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === '/api') return handleApiIndex(env);
-    if (url.pathname === '/api/analyze') return handleAnalyze(req, env);
-    if (url.pathname === '/api/license') return handleLicense(req, env);
+    if (url.pathname === '/api/analyze') return handleAnalyze(req, env, ctx);
+    if (url.pathname === '/api/license') return handleLicense(req, env, ctx);
     if (url.pathname === '/api/keys') return handleKeys(req, env);
-    if (url.pathname === '/api/share') return handleShare(req, env);
+    if (url.pathname === '/api/share') return handleShare(req, env, ctx);
     if (url.pathname === '/api/checkout') return handleCheckout(req, env);
+    if (url.pathname === '/api/stats') return handleStats(req, env);
+
+    // Pretty path for the usage dashboard; assets serve the HTML file.
+    if (url.pathname === '/dashboard') {
+      return env.ASSETS.fetch(new Request(new URL('/dashboard.html', url), req));
+    }
 
     // Static assets passthrough.
     return env.ASSETS.fetch(req);
