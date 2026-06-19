@@ -106,6 +106,30 @@ e.g.,
   </section>
 </main>
 
+<div id="paywall" class="paywall" hidden role="dialog" aria-modal="true" aria-labelledby="paywall-title">
+  <div class="paywall-backdrop" data-paywall-close></div>
+  <div class="paywall-card">
+    <button class="paywall-x" type="button" data-paywall-close aria-label="Close">×</button>
+    <h2 id="paywall-title">You've used today's free analyses</h2>
+    <p id="paywall-sub" class="paywall-sub">Upgrade to PromptScope Pro for unlimited analyses, suggested rewrites, and API access.</p>
+    <div class="paywall-price"><strong>$19</strong><span>/ month</span></div>
+    <ul class="paywall-perks">
+      <li>Unlimited analyses — no daily cap</li>
+      <li>Suggested rewrites on every analysis</li>
+      <li>API access with <code>x-promptscope-license</code></li>
+    </ul>
+    <a id="paywall-upgrade" data-upgrade-link class="button-link paywall-cta" href="/api/checkout" target="_blank" rel="noopener">Upgrade with Lemon Squeezy</a>
+    <div class="paywall-have">
+      <label for="paywall-license-key">Already upgraded? Paste your license key</label>
+      <div class="paywall-key-row">
+        <input id="paywall-license-key" type="password" placeholder="Lemon Squeezy license key" autocomplete="off" spellcheck="false">
+        <button id="paywall-license-save" type="button">Unlock</button>
+      </div>
+      <p id="paywall-status" class="license-status" aria-live="polite"></p>
+    </div>
+  </div>
+</div>
+
 <footer>
   <p>PromptScope • <a href="https://github.com/4444J99/promptscope">GitHub</a> • <a href="/api">API</a> • <a href="/dashboard">Dashboard</a> • <a href="/privacy">Privacy</a></p>
   <p style="margin-top:10px">Sister products:</p>
