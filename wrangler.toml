@@ -20,6 +20,13 @@ binding = "AI"
 # LEMONSQUEEZY_PRODUCT_ID = "123456"
 # LEMONSQUEEZY_VARIANT_ID = "123456"
 
+# First-party API keys (/api/keys):
+# ADMIN_TOKEN authorizes issuing / listing / revoking API keys. It is a SECRET,
+# never a plaintext [vars] entry — set it out of band:
+#   Production:  wrangler secret put ADMIN_TOKEN
+#   Local dev:   add ADMIN_TOKEN to .dev.vars (see .dev.vars.example)
+# Issued keys (psk_...) are stored only as SHA-256 hashes in PROMPTSCOPE_PRO_TOKENS.
+
 [[kv_namespaces]]
 binding = "RATE_KV"
 id = "feb4c5c28d854ba4b03ab920c4876851"

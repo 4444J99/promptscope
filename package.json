@@ -8,6 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit --target es2022 --lib es2022,webworker --types @cloudflare/workers-types src/index.ts",
+    "test": "node test-auth.mjs",
     "kv:create": "scripts/kv-bootstrap.sh"
   },
   "devDependencies": {
