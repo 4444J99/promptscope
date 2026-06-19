@@ -184,6 +184,75 @@ button.secondary,
 .upgrade-card .alt-pay { color: var(--muted); font-size: 13px; margin-top: 12px; }
 .upgrade-card code { font-family: ui-monospace, monospace; background: var(--card); padding: 2px 6px; border-radius: 4px; }
 
+/* Quota nudge — surfaces the upgrade path as the free limit nears. */
+.quota a { color: var(--accent); }
+.quota.low { color: var(--warn); }
+
+/* Conversion paywall modal — shown at the quota-exhaustion moment. */
+.paywall {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.paywall[hidden] { display: none; }
+.paywall-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(1, 4, 9, 0.7);
+  backdrop-filter: blur(2px);
+}
+.paywall-card {
+  position: relative;
+  z-index: 1;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 28px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.paywall-x {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  padding: 4px 10px;
+  line-height: 1;
+}
+.paywall-x:hover { color: var(--fg); filter: none; }
+.paywall-card h2 { font-size: 22px; margin-bottom: 8px; }
+.paywall-sub { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+.paywall-price { display: flex; align-items: baseline; gap: 6px; margin-bottom: 14px; }
+.paywall-price strong { font-size: 36px; color: var(--accent); }
+.paywall-price span { color: var(--muted); }
+.paywall-perks { list-style: none; margin-bottom: 18px; }
+.paywall-perks li { padding: 6px 0 6px 24px; position: relative; font-size: 14px; }
+.paywall-perks li::before { content: "✓"; color: var(--good); position: absolute; left: 0; font-weight: 700; }
+.paywall-perks code { font-family: ui-monospace, monospace; background: var(--bg); padding: 2px 6px; border-radius: 4px; }
+.paywall-cta { width: 100%; padding: 12px; font-size: 15px; }
+.paywall-have { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
+.paywall-have label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.paywall-key-row { display: flex; gap: 8px; }
+.paywall-key-row input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
+.paywall-key-row input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
 #why p { margin: 8px 0; color: var(--muted); }
 
 #faq details {

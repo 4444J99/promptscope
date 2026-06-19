@@ -39,9 +39,50 @@ function setLicenseStatus(message, tone = "") {
 function setProUi(active) {
   $("license-clear-btn").hidden = !storedLicenseKey();
   if (active) {
-    $("quota").textContent = "Pro license active";
+    const quota = $("quota");
+    quota.textContent = "Pro license active";
+    quota.classList.remove("low");
     setLicenseStatus("Pro license active", "good");
+    hidePaywall();
   }
+}
+
+function setQuota(remaining) {
+  const quota = $("quota");
+  if (remaining <= 0) {
+    quota.innerHTML = `No free analyses left today — <a href="#" data-open-paywall>upgrade for unlimited</a>`;
+    quota.classList.add("low");
+  } else if (remaining === 1) {
+    quota.textContent = `${remaining} free analysis remaining today`;
+    quota.classList.add("low");
+  } else {
+    quota.textContent = `${remaining} free analyses remaining today`;
+    quota.classList.remove("low");
+  }
+}
+
+// Shared Lemon Squeezy validation used by the license bar, the paywall, and hydration.
+async function requestLicense(key) {
+  const r = await fetch("/api/license", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ license_key: key }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (data.upgrade_url) setUpgradeLinks(data.upgrade_url);
+  return { ok: r.ok && data.valid, error: data.license?.error || "license is not valid" };
+}
+
+function showPaywall(message) {
+  if (message) $("paywall-sub").textContent = message;
+  $("paywall").hidden = false;
+  $("paywall-status").textContent = "";
+  document.body.style.overflow = "hidden";
+}
+
+function hidePaywall() {
+  $("paywall").hidden = true;
+  document.body.style.overflow = "";
 }
 
 function renderResult(data) {
@@ -109,11 +150,17 @@ async function analyze() {
     });
     const data = await r.json();
     if (data.upgrade_url) setUpgradeLinks(data.upgrade_url);
+    if (r.status === 429) {
+      // Highest-intent conversion moment: free quota is spent. Surface the paywall.
+      showPaywall(data.error ?? "You've used today's free analyses.");
+      setQuota(0);
+      return;
+    }
     if (!r.ok) {
       throw new Error(data.error ?? `HTTP ${r.status}`);
     }
     if (data.quota_remaining !== undefined) {
-      $("quota").textContent = `${data.quota_remaining} free analyses remaining today`;
+      setQuota(data.quota_remaining);
     }
     renderResult(data);
   } catch (err) {
@@ -136,17 +183,8 @@ async function saveLicense() {
   setLicenseStatus("Checking license...");
 
   try {
-    const r = await fetch("/api/license", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ license_key: key }),
-    });
-    const data = await r.json();
-    if (data.upgrade_url) setUpgradeLinks(data.upgrade_url);
-    if (!r.ok || !data.valid) {
-      throw new Error(data.license?.error || "license is not valid");
-    }
-
+    const { ok, error } = await requestLicense(key);
+    if (!ok) throw new Error(error);
     setStoredLicenseKey(key);
     setProUi(true);
   } catch (err) {
@@ -159,11 +197,46 @@ async function saveLicense() {
   }
 }
 
+// Unlock from inside the paywall: validate, persist, dismiss, and re-run the blocked analysis.
+async function paywallUnlock() {
+  const input = $("paywall-license-key");
+  const status = $("paywall-status");
+  const key = input.value.trim();
+  if (!key) {
+    status.textContent = "Paste a Lemon Squeezy license key first.";
+    status.className = "license-status bad";
+    return;
+  }
+
+  const btn = $("paywall-license-save");
+  btn.disabled = true;
+  btn.textContent = "Checking...";
+  status.textContent = "Checking license...";
+  status.className = "license-status";
+
+  try {
+    const { ok, error } = await requestLicense(key);
+    if (!ok) throw new Error(error);
+    setStoredLicenseKey(key);
+    $("license-key").value = key;
+    setProUi(true);
+    analyze();
+  } catch (err) {
+    status.textContent = err.message ?? "License is not valid.";
+    status.className = "license-status bad";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Unlock";
+  }
+}
+
 function clearLicense() {
   setStoredLicenseKey("");
   $("license-key").value = "";
   $("license-clear-btn").hidden = true;
-  $("quota").textContent = "5 free analyses / day";
+  const quota = $("quota");
+  quota.textContent = "5 free analyses / day";
+  quota.classList.remove("low");
   setLicenseStatus("License cleared.");
 }
 
@@ -174,17 +247,11 @@ async function hydrateLicense() {
   $("license-clear-btn").hidden = false;
   setLicenseStatus("Checking saved license...");
   try {
-    const r = await fetch("/api/license", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ license_key: key }),
-    });
-    const data = await r.json();
-    if (data.upgrade_url) setUpgradeLinks(data.upgrade_url);
-    if (r.ok && data.valid) {
+    const { ok, error } = await requestLicense(key);
+    if (ok) {
       setProUi(true);
     } else {
-      setLicenseStatus(`Saved license not accepted: ${data.license?.error || "invalid"}`, "bad");
+      setLicenseStatus(`Saved license not accepted: ${error}`, "bad");
     }
   } catch {
     setLicenseStatus("Could not check saved license yet.");
@@ -236,6 +303,24 @@ document.addEventListener("DOMContentLoaded", () => {
   $("license-clear-btn").addEventListener("click", clearLicense);
   $("license-key").addEventListener("keydown", (event) => {
     if (event.key === "Enter") saveLicense();
+  });
+
+  $("paywall-license-save").addEventListener("click", paywallUnlock);
+  $("paywall-license-key").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") paywallUnlock();
+  });
+  document.querySelectorAll("[data-paywall-close]").forEach((el) => {
+    el.addEventListener("click", hidePaywall);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("paywall").hidden) hidePaywall();
+  });
+  // Quota nudge link ("upgrade for unlimited") opens the paywall.
+  $("quota").addEventListener("click", (event) => {
+    if (event.target.closest("[data-open-paywall]")) {
+      event.preventDefault();
+      showPaywall();
+    }
   });
 
   loadLicenseConfig().then(hydrateLicense);
