@@ -165,8 +165,9 @@ async function recordSince(env: Env, date: string): Promise<void> {
 
 // Fire-and-forget counter increments. Bundled onto ctx.waitUntil so they never
 // add latency to the user-facing response.
-function bumpMetrics(env: Env, ctx: ExecutionContext, deltas: MetricCounts): void {
+function bumpMetrics(env: Env, ctx: ExecutionContext | undefined, deltas: MetricCounts): void {
   if (Object.keys(deltas).length === 0) return;
+  if (!ctx?.waitUntil) return;
   const date = todayUtc();
   ctx.waitUntil(Promise.all([
     addCounts(env, METRIC_ALL_KEY, deltas),
