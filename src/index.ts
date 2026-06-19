@@ -25,6 +25,11 @@ const MAX_PROMPT_CHARS = 32_000;
 const SHARE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const LICENSE_CACHE_TTL_SECONDS = 10 * 60;
 const MAX_LICENSE_KEY_CHARS = 256;
+// Upper bound on a request body we'll read. A 32k-char prompt is ~128 KB of
+// UTF-8 plus JSON escaping; 512 KB leaves generous headroom while rejecting
+// obviously-abusive payloads before we parse them.
+const MAX_BODY_BYTES = 512 * 1024;
+const MAX_SHARE_ID_CHARS = 64;
 const LEMON_LICENSE_VALIDATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/validate';
 
 const SYSTEM_PROMPT = `You are PromptScope, an expert in LLM system-prompt design.
@@ -93,6 +98,120 @@ interface LicenseAccess {
   variantName?: string;
   source?: 'cache' | 'lemonsqueezy';
   error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Structured logging
+//
+// Every line is a single JSON object so Cloudflare Workers observability /
+// Logpush can index fields directly. NEVER log secrets — no license keys, no
+// prompt text. We log lengths, hashes, and outcomes instead.
+// ---------------------------------------------------------------------------
+
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+// Extract a safe, bounded message from an unknown thrown value for logging.
+function errorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.length > 500 ? `${msg.slice(0, 500)}…` : msg;
+}
+
+function emitLog(level: LogLevel, event: string, fields: Record<string, unknown>): void {
+  let line: string;
+  try {
+    line = JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields });
+  } catch {
+    // Defensive: a non-serializable field must never take down a request.
+    line = JSON.stringify({ level, event, ts: new Date().toISOString(), log_error: 'unserializable fields' });
+  }
+  if (level === 'error') console.error(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
+}
+
+interface RequestContext {
+  reqId: string;
+  method: string;
+  path: string;
+  log: (level: LogLevel, event: string, fields?: Record<string, unknown>) => void;
+}
+
+function makeContext(req: Request, url: URL): RequestContext {
+  // Prefer Cloudflare's ray id so logs correlate with the CF dashboard;
+  // fall back to a UUID for local `wrangler dev`.
+  const reqId = req.headers.get('cf-ray') ?? crypto.randomUUID();
+  const method = req.method;
+  const path = url.pathname;
+  return {
+    reqId,
+    method,
+    path,
+    log: (level, event, fields = {}) => emitLog(level, event, { request_id: reqId, method, path, ...fields }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Response + input-validation helpers
+// ---------------------------------------------------------------------------
+
+function jsonError(ctx: RequestContext, error: string, status: number, extra: Record<string, unknown> = {}): Response {
+  // request_id is additive — existing clients read `error`; new clients can
+  // quote request_id when reporting problems.
+  return Response.json({ error, request_id: ctx.reqId, ...extra }, {
+    status,
+    headers: { 'x-request-id': ctx.reqId },
+  });
+}
+
+function methodNotAllowed(ctx: RequestContext, allow: string): Response {
+  return jsonError(ctx, 'method not allowed', 405, { allow });
+}
+
+type BodyResult =
+  | { ok: true; body: Record<string, unknown> }
+  | { ok: false; response: Response };
+
+// Reads and validates a JSON request body: enforces a size cap before parsing,
+// rejects malformed JSON, and requires a plain object (not an array/primitive).
+async function readJsonObject(req: Request, ctx: RequestContext): Promise<BodyResult> {
+  const contentLength = Number(req.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    ctx.log('warn', 'body_too_large', { content_length: contentLength, limit: MAX_BODY_BYTES });
+    return { ok: false, response: jsonError(ctx, 'request body too large', 413) };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = await req.json();
+  } catch {
+    return { ok: false, response: jsonError(ctx, 'invalid JSON', 400) };
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, response: jsonError(ctx, 'request body must be a JSON object', 400) };
+  }
+  return { ok: true, body: parsed as Record<string, unknown> };
+}
+
+type PromptResult =
+  | { ok: true; prompt: string }
+  | { ok: false; response: Response };
+
+// Validates the `prompt` field strictly: it must be a non-empty string within
+// the char limit. We do NOT coerce objects/numbers via String() — that would
+// silently analyze "[object Object]".
+function validatePrompt(body: Record<string, unknown>, ctx: RequestContext): PromptResult {
+  const value = body.prompt;
+  if (typeof value !== 'string') {
+    return { ok: false, response: jsonError(ctx, 'prompt must be a string', 400) };
+  }
+  if (value.length === 0) {
+    return { ok: false, response: jsonError(ctx, 'missing prompt', 400) };
+  }
+  if (value.length > MAX_PROMPT_CHARS) {
+    return { ok: false, response: jsonError(ctx, `prompt exceeds ${MAX_PROMPT_CHARS} chars`, 400) };
+  }
+  return { ok: true, prompt: value };
 }
 
 function approxTokens(s: string): number { return Math.ceil(s.length / 4); }
@@ -278,7 +397,7 @@ function newId(): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function handleAnalyze(req: Request, env: Env): Promise<Response> {
+async function handleAnalyze(req: Request, env: Env, ctx: RequestContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       description: 'PromptScope analyze API',
@@ -291,16 +410,15 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
       upgrade_url: upgradeHref(env),
     });
   }
-  if (req.method !== 'POST') return new Response('method not allowed', { status: 405 });
+  if (req.method !== 'POST') return methodNotAllowed(ctx, 'GET, POST');
 
-  let body: any;
-  try { body = await req.json(); } catch { return Response.json({ error: 'invalid JSON' }, { status: 400 }); }
+  const parsedBody = await readJsonObject(req, ctx);
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.body;
 
-  const prompt = String(body?.prompt ?? '');
-  if (!prompt) return Response.json({ error: 'missing prompt' }, { status: 400 });
-  if (prompt.length > MAX_PROMPT_CHARS) {
-    return Response.json({ error: `prompt exceeds ${MAX_PROMPT_CHARS} chars` }, { status: 400 });
-  }
+  const promptResult = validatePrompt(body, ctx);
+  if (!promptResult.ok) return promptResult.response;
+  const prompt = promptResult.prompt;
 
   const licenseAccess = await validateLemonLicense(licenseKeyFromRequest(req, body), env);
   const isPro = licenseAccess.isPro;
@@ -310,11 +428,11 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
     const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
     const rl = await rateCheck(ip, env);
     if (!rl.allowed) {
-      return Response.json({
-        error: 'daily free quota exhausted; upgrade to Pro for unlimited analysis',
+      ctx.log('info', 'rate_limited', { char_count: prompt.length });
+      return jsonError(ctx, 'daily free quota exhausted; upgrade to Pro for unlimited analysis', 429, {
         upgrade_url: upgradeHref(env),
         ...(licenseAccess.error ? { license_error: licenseAccess.error } : {}),
-      }, { status: 429 });
+      });
     }
     remaining = rl.remaining;
   }
@@ -329,17 +447,17 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
       max_tokens: 1500,
     });
   } catch (err) {
-    return Response.json({ error: `inference failed: ${(err as Error).message}` }, { status: 500 });
+    // Log the real cause server-side; return a generic message so we don't
+    // leak provider internals / stack details to clients.
+    ctx.log('error', 'inference_failed', { stage: 'analyze', error: errorMessage(err) });
+    return jsonError(ctx, 'inference failed', 502);
   }
 
   const raw = aiResp?.response ?? aiResp?.result ?? aiResp ?? '';
   const parsed = tryParseJson(raw);
   if (!parsed || typeof parsed.score !== 'number') {
-    return Response.json({
-      error: 'analysis output malformed',
-      raw_type: typeof raw,
-      raw_preview: typeof raw === 'string' ? raw.slice(0, 500) : JSON.stringify(raw).slice(0, 500),
-    }, { status: 502 });
+    ctx.log('warn', 'malformed_output', { raw_type: typeof raw });
+    return jsonError(ctx, 'analysis output malformed', 502);
   }
 
   let suggested_rewrite: string | undefined;
@@ -354,10 +472,13 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
         max_tokens: 1500,
       });
       suggested_rewrite = String(rewriteResp?.response ?? rewriteResp?.result ?? '').trim();
-    } catch {
+    } catch (err) {
+      ctx.log('warn', 'inference_failed', { stage: 'rewrite', error: errorMessage(err) });
       rewrite_error = 'rewrite unavailable';
     }
   }
+
+  ctx.log('info', 'analyze_ok', { plan: isPro ? 'pro' : 'free', score: parsed.score, char_count: prompt.length });
 
   const licenseInfo = publicLicense(licenseAccess);
   return Response.json({
@@ -381,7 +502,7 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
   });
 }
 
-async function handleLicense(req: Request, env: Env): Promise<Response> {
+async function handleLicense(req: Request, env: Env, ctx: RequestContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       auth_header: 'x-promptscope-license',
@@ -390,12 +511,14 @@ async function handleLicense(req: Request, env: Env): Promise<Response> {
       cache_ttl_seconds: LICENSE_CACHE_TTL_SECONDS,
     });
   }
-  if (req.method !== 'POST') return new Response('method not allowed', { status: 405 });
+  if (req.method !== 'POST') return methodNotAllowed(ctx, 'GET, POST');
 
-  const body = await req.json().catch(() => null) as { license_key?: string; licenseKey?: string } | null;
-  if (!body) return Response.json({ error: 'invalid JSON' }, { status: 400 });
+  const parsedBody = await readJsonObject(req, ctx);
+  if (!parsedBody.ok) return parsedBody.response;
+  const body = parsedBody.body;
 
   const access = await validateLemonLicense(normalizeLicenseKey(body.license_key ?? body.licenseKey), env);
+  ctx.log('info', 'license_check', { valid: access.isPro, source: access.source });
   const status = access.isPro ? 200 : 401;
   const licenseInfo = publicLicense(access);
   return Response.json({
@@ -406,38 +529,50 @@ async function handleLicense(req: Request, env: Env): Promise<Response> {
   }, { status });
 }
 
-async function handleShare(req: Request, env: Env): Promise<Response> {
+async function handleShare(req: Request, env: Env, ctx: RequestContext): Promise<Response> {
   if (req.method === 'POST') {
-    let body: any;
-    try { body = await req.json(); } catch { return Response.json({ error: 'invalid JSON' }, { status: 400 }); }
-    const prompt = String(body?.prompt ?? '');
-    if (!prompt) return Response.json({ error: 'missing prompt' }, { status: 400 });
-    if (prompt.length > MAX_PROMPT_CHARS) return Response.json({ error: 'prompt too long' }, { status: 400 });
+    const parsedBody = await readJsonObject(req, ctx);
+    if (!parsedBody.ok) return parsedBody.response;
+
+    const promptResult = validatePrompt(parsedBody.body, ctx);
+    if (!promptResult.ok) return promptResult.response;
+
     const id = newId();
-    await env.SHARE_KV.put(id, prompt, { expirationTtl: SHARE_TTL_SECONDS });
+    try {
+      await env.SHARE_KV.put(id, promptResult.prompt, { expirationTtl: SHARE_TTL_SECONDS });
+    } catch (err) {
+      ctx.log('error', 'share_put_failed', { error: errorMessage(err) });
+      return jsonError(ctx, 'could not save share link', 502);
+    }
+    ctx.log('info', 'share_created', { id, char_count: promptResult.prompt.length });
     return Response.json({ id, expires_in_seconds: SHARE_TTL_SECONDS });
   }
   if (req.method === 'GET') {
     const id = new URL(req.url).searchParams.get('id');
-    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) return Response.json({ error: 'invalid id' }, { status: 400 });
-    const prompt = await env.SHARE_KV.get(id);
-    if (!prompt) return Response.json({ error: 'not found or expired' }, { status: 404 });
+    if (!id || id.length > MAX_SHARE_ID_CHARS || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+      return jsonError(ctx, 'invalid id', 400);
+    }
+    let prompt: string | null;
+    try {
+      prompt = await env.SHARE_KV.get(id);
+    } catch (err) {
+      ctx.log('error', 'share_get_failed', { id, error: errorMessage(err) });
+      return jsonError(ctx, 'could not load share link', 502);
+    }
+    if (!prompt) return jsonError(ctx, 'not found or expired', 404);
     return Response.json({ id, prompt });
   }
-  return new Response('method not allowed', { status: 405 });
+  return methodNotAllowed(ctx, 'GET, POST');
 }
 
-async function handleCheckout(req: Request, env: Env): Promise<Response> {
+async function handleCheckout(req: Request, env: Env, ctx: RequestContext): Promise<Response> {
   const url = upgradeUrl(env);
   if (!url) {
-    return Response.json({
-      error: 'upgrade link is not configured',
-      required_var: 'LEMONSQUEEZY_CHECKOUT_URL',
-    }, { status: 503 });
+    return jsonError(ctx, 'upgrade link is not configured', 503, { required_var: 'LEMONSQUEEZY_CHECKOUT_URL' });
   }
   if (req.method === 'GET') return Response.redirect(url, 303);
   if (req.method === 'POST') return Response.json({ checkout_url: url, upgrade_url: url });
-  return new Response('method not allowed', { status: 405 });
+  return methodNotAllowed(ctx, 'GET, POST');
 }
 
 function handleApiIndex(env: Env): Response {
@@ -456,16 +591,40 @@ function handleApiIndex(env: Env): Response {
 }
 
 export default {
-  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(req: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
 
-    if (url.pathname === '/api') return handleApiIndex(env);
-    if (url.pathname === '/api/analyze') return handleAnalyze(req, env);
-    if (url.pathname === '/api/license') return handleLicense(req, env);
-    if (url.pathname === '/api/share') return handleShare(req, env);
-    if (url.pathname === '/api/checkout') return handleCheckout(req, env);
+    // Non-API paths are static assets — pass straight through untouched.
+    if (url.pathname !== '/api' && !url.pathname.startsWith('/api/')) {
+      return env.ASSETS.fetch(req);
+    }
 
-    // Static assets passthrough.
-    return env.ASSETS.fetch(req);
+    const ctx = makeContext(req, url);
+    const startedMs = Date.now();
+    try {
+      let resp: Response;
+      switch (url.pathname) {
+        case '/api': resp = handleApiIndex(env); break;
+        case '/api/analyze': resp = await handleAnalyze(req, env, ctx); break;
+        case '/api/license': resp = await handleLicense(req, env, ctx); break;
+        case '/api/share': resp = await handleShare(req, env, ctx); break;
+        case '/api/checkout': resp = await handleCheckout(req, env, ctx); break;
+        default: resp = jsonError(ctx, 'not found', 404); break;
+      }
+      // Stamp every API response with the trace id. Redirects (3xx) carry an
+      // immutable Headers guard, so skip them to avoid throwing.
+      if (resp.status < 300 || resp.status >= 400) resp.headers.set('x-request-id', ctx.reqId);
+      ctx.log('info', 'request', { status: resp.status, duration_ms: Date.now() - startedMs });
+      return resp;
+    } catch (err) {
+      // Last line of defense: any uncaught throw becomes a clean 500 with a
+      // request id the user can quote, while the stack stays in our logs only.
+      ctx.log('error', 'unhandled_error', {
+        error: errorMessage(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        duration_ms: Date.now() - startedMs,
+      });
+      return jsonError(ctx, 'internal error', 500);
+    }
   },
 };
