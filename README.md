@@ -45,7 +45,7 @@ content is recorded — only event counts. Raw numbers are served as JSON at
 - Cloudflare Workers (compute + assets)
 - Cloudflare Workers AI — `@cf/meta/llama-3.3-70b-instruct-fp8-fast`
 - Cloudflare KV — rate limiting, share permalinks, short-lived license validation cache
-- Lemon Squeezy License API — Pro license validation
+- Lemon Squeezy Checkout + License API — Pro purchase and license validation
 
 ## Tests
 
@@ -72,16 +72,39 @@ wrangler kv namespace create SHARE_KV
 wrangler kv namespace create PROMPTSCOPE_PRO_TOKENS
 ```
 
-Configure the Lemon Squeezy upgrade link:
+Configure Lemon Squeezy billing. The simplest option is a hosted Lemon Squeezy
+buy URL:
 
 ```toml
 [vars]
 LEMONSQUEEZY_CHECKOUT_URL = "https://your-store.lemonsqueezy.com/buy/..."
 
-# Optional, but recommended for production:
+# Recommended: reject valid Lemon licenses from other products/plans.
 LEMONSQUEEZY_PRODUCT_ID = "123456"
 LEMONSQUEEZY_VARIANT_ID = "123456"
 ```
+
+Or let the Worker create a fresh checkout session at `/api/checkout`:
+
+```toml
+[vars]
+LEMONSQUEEZY_STORE_ID = "123456"
+LEMONSQUEEZY_VARIANT_ID = "123456"
+LEMONSQUEEZY_PRODUCT_ID = "123456"
+LEMONSQUEEZY_CHECKOUT_REDIRECT_URL = "https://your-domain.example/?checkout=success"
+# Optional for sandbox stores:
+# LEMONSQUEEZY_TEST_MODE = "true"
+```
+
+```bash
+# Secret, not a plaintext [vars] entry:
+wrangler secret put LEMONSQUEEZY_API_KEY
+```
+
+With either setup, `/api/checkout` redirects browser GET requests to Lemon
+Squeezy and returns `{ checkout_url }` for POST requests. After purchase, the
+customer pastes their Lemon Squeezy license key into PromptScope; the Worker
+validates it before unlocking Pro-only rewrites and unlimited analysis.
 
 Pro API calls use the license header:
 

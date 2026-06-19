@@ -13,12 +13,20 @@ binding = "ASSETS"
 binding = "AI"
 
 # Lemon Squeezy setup:
-# - Set LEMONSQUEEZY_CHECKOUT_URL to the hosted checkout/buy URL for PromptScope Pro.
-# - Optionally set product/variant IDs to reject valid Lemon licenses from other products.
+# - Option A: set LEMONSQUEEZY_CHECKOUT_URL to a hosted checkout/buy URL.
+# - Option B: set STORE_ID + VARIANT_ID here and LEMONSQUEEZY_API_KEY as a secret
+#   so /api/checkout creates a fresh Lemon Squeezy checkout session.
+# - Set product/variant IDs to reject valid Lemon licenses from other products/plans.
 # [vars]
 # LEMONSQUEEZY_CHECKOUT_URL = "https://your-store.lemonsqueezy.com/buy/..."
+# LEMONSQUEEZY_STORE_ID = "123456"
 # LEMONSQUEEZY_PRODUCT_ID = "123456"
 # LEMONSQUEEZY_VARIANT_ID = "123456"
+# LEMONSQUEEZY_CHECKOUT_REDIRECT_URL = "https://your-domain.example/?checkout=success"
+# LEMONSQUEEZY_TEST_MODE = "true"
+#
+# Secrets:
+#   wrangler secret put LEMONSQUEEZY_API_KEY
 
 # First-party API keys (/api/keys):
 # ADMIN_TOKEN authorizes issuing / listing / revoking API keys. It is a SECRET,

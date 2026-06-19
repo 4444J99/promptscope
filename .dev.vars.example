@@ -8,3 +8,11 @@ ADMIN_TOKEN="replace-with-a-long-random-string"
 
 # Optional: Lemon Squeezy hosted checkout URL for the Pro upgrade button.
 # LEMONSQUEEZY_CHECKOUT_URL="https://your-store.lemonsqueezy.com/buy/..."
+
+# Optional alternative: dynamic Lemon Squeezy checkouts created by /api/checkout.
+# LEMONSQUEEZY_API_KEY="replace-with-lemon-api-key"
+# LEMONSQUEEZY_STORE_ID="123456"
+# LEMONSQUEEZY_PRODUCT_ID="123456"
+# LEMONSQUEEZY_VARIANT_ID="123456"
+# LEMONSQUEEZY_CHECKOUT_REDIRECT_URL="http://localhost:8787/?checkout=success"
+# LEMONSQUEEZY_TEST_MODE="true"
