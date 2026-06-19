@@ -27,6 +27,19 @@ Runs on Cloudflare Workers AI. The prompt is not stored unless a share-link is g
 
 **Checkout:** Lemon Squeezy. Pro access is unlocked by a Lemon Squeezy license key.
 
+## Dashboard
+
+A minimal usage/status dashboard lives at **`/dashboard`** (linked from the footer).
+It shows analyses today and all-time, the Pro-vs-free split, share links, rewrites,
+approximate tokens analyzed, a 14-day analyses sparkline, and operational counters
+(including free-quota hits and license-check outcomes).
+
+Metrics are best-effort counters kept in the existing `RATE_KV` namespace (keys
+prefixed `m:`, separate from the `rl:` rate-limit keys) and incremented off the
+response path via `ctx.waitUntil`, so they add no user-facing latency. No prompt
+content is recorded — only event counts. Raw numbers are served as JSON at
+**`GET /api/stats`**.
+
 ## Stack
 
 - Cloudflare Workers (compute + assets)
