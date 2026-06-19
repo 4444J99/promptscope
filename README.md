@@ -27,6 +27,11 @@ Runs on Cloudflare Workers AI. The prompt is not stored unless a share-link is g
 
 **Checkout:** Lemon Squeezy. Pro access is unlocked by a Lemon Squeezy license key.
 
+## API docs
+
+Customer-facing endpoint reference, auth options, error handling, and copy-paste
+examples live in [docs/API.md](./docs/API.md).
+
 ## Dashboard
 
 A minimal usage/status dashboard lives at **`/dashboard`** (linked from the footer).
