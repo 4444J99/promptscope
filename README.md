@@ -47,6 +47,18 @@ content is recorded — only event counts. Raw numbers are served as JSON at
 - Cloudflare KV — rate limiting, share permalinks, short-lived license validation cache
 - Lemon Squeezy License API — Pro license validation
 
+## Tests
+
+Integration tests drive the Worker's `fetch` entrypoint end-to-end — routing,
+rate limiting, KV persistence, license validation/caching and the AI + Lemon
+Squeezy integrations — using in-memory binding fakes (see `test/harness.ts`).
+They run on Node's built-in test runner with native TypeScript support, so no
+build step or extra dependency is needed:
+
+```bash
+npm test          # requires Node >= 23.6 (or 22.18+)
+```
+
 ## Self-host
 
 PromptScope is MIT-licensed. Fork the repo, deploy to your own Cloudflare account.
