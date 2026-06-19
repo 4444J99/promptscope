@@ -4,6 +4,7 @@
  * Single Worker handles:
  *   - Static assets (public/) via ASSETS binding
  *   - /api/analyze, /api/share, /api/license, /api/checkout
+ *   - /api/keys — first-party API-key issuance + verification (admin-gated)
  */
 
 interface Env {
@@ -11,13 +12,17 @@ interface Env {
   ASSETS: Fetcher;
   RATE_KV: KVNamespace;
   SHARE_KV: KVNamespace;
-  // Existing KV binding now stores short-lived Lemon Squeezy license validation cache.
+  // KV binding stores the short-lived Lemon Squeezy license validation cache
+  // (prefix `ls:`) and first-party API-key records (prefix `ak:`).
   PROMPTSCOPE_PRO_TOKENS: KVNamespace;
   LEMONSQUEEZY_CHECKOUT_URL?: string;
   LEMONSQUEEZY_PRODUCT_ID?: string;
   LEMONSQUEEZY_VARIANT_ID?: string;
   LEMONSQUEEZY_ALLOWED_PRODUCT_IDS?: string;
   LEMONSQUEEZY_ALLOWED_VARIANT_IDS?: string;
+  // Shared secret that authorizes API-key administration (issue/list/revoke).
+  // Set via `wrangler secret put ADMIN_TOKEN` (prod) or `.dev.vars` (local).
+  ADMIN_TOKEN?: string;
 }
 
 const FREE_DAILY_LIMIT = 5;
@@ -26,6 +31,29 @@ const SHARE_TTL_SECONDS = 60 * 60 * 24 * 30;
 const LICENSE_CACHE_TTL_SECONDS = 10 * 60;
 const MAX_LICENSE_KEY_CHARS = 256;
 const LEMON_LICENSE_VALIDATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/validate';
+
+// First-party API keys: issued by an admin, verified on the primary endpoints.
+// Plaintext keys look like `psk_<base64url>` and are NEVER stored — only the
+// SHA-256 hash is persisted at `ak:<hash>` in PROMPTSCOPE_PRO_TOKENS.
+const API_KEY_PREFIX = 'psk_';
+const API_KEY_RECORD_PREFIX = 'ak:';
+const API_KEY_RANDOM_BYTES = 24;
+const MAX_API_KEY_LABEL_CHARS = 120;
+const API_KEY_PLANS = ['free', 'pro'] as const;
+type ApiKeyPlan = (typeof API_KEY_PLANS)[number];
+
+interface ApiKeyRecord {
+  id: string;            // public short id (safe to display); first 16 hex of the hash
+  label?: string;        // human-readable note set at issuance
+  plan: ApiKeyPlan;      // 'pro' grants unlimited + advanced features
+  createdAt: string;     // ISO timestamp
+  revoked?: boolean;     // soft-revoked keys fail verification but remain listable
+}
+
+interface ApiKeyAuth {
+  record: ApiKeyRecord;
+  isPro: boolean;
+}
 
 const SYSTEM_PROMPT = `You are PromptScope, an expert in LLM system-prompt design.
 
@@ -265,12 +293,136 @@ async function validateLemonLicense(licenseKey: string | undefined, env: Env): P
   return access;
 }
 
-async function rateCheck(ip: string, env: Env): Promise<{ allowed: boolean; remaining: number }> {
-  const key = `rl:${ip}:${new Date().toISOString().slice(0, 10)}`;
+async function rateCheck(bucket: string, env: Env): Promise<{ allowed: boolean; remaining: number }> {
+  const key = `rl:${bucket}:${new Date().toISOString().slice(0, 10)}`;
   const current = Number(await env.RATE_KV.get(key) ?? 0);
   if (current >= FREE_DAILY_LIMIT) return { allowed: false, remaining: 0 };
   await env.RATE_KV.put(key, String(current + 1), { expirationTtl: 60 * 60 * 26 });
   return { allowed: true, remaining: FREE_DAILY_LIMIT - current - 1 };
+}
+
+// --- First-party API keys --------------------------------------------------
+
+// Constant-time string comparison to avoid leaking the admin token via timing.
+function timingSafeEqual(a: string, b: string): boolean {
+  const ba = new TextEncoder().encode(a);
+  const bb = new TextEncoder().encode(b);
+  if (ba.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ba.length; i++) diff |= ba[i] ^ bb[i];
+  return diff === 0;
+}
+
+function adminTokenFromRequest(req: Request): string | undefined {
+  const auth = req.headers.get('authorization');
+  if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim() || undefined;
+  return req.headers.get('x-promptscope-admin')?.trim() || undefined;
+}
+
+// Returns undefined when the caller is authorized, otherwise an error Response.
+function requireAdmin(req: Request, env: Env): Response | undefined {
+  const configured = env.ADMIN_TOKEN?.trim();
+  if (!configured) {
+    return Response.json({
+      error: 'API-key administration is not configured',
+      required_secret: 'ADMIN_TOKEN',
+      docs: 'Set it with: wrangler secret put ADMIN_TOKEN',
+    }, { status: 503 });
+  }
+  const provided = adminTokenFromRequest(req);
+  if (!provided || !timingSafeEqual(provided, configured)) {
+    return Response.json({ error: 'unauthorized' }, {
+      status: 401,
+      headers: { 'WWW-Authenticate': 'Bearer realm="promptscope-admin"' },
+    });
+  }
+  return undefined;
+}
+
+function randomKeySuffix(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(API_KEY_RANDOM_BYTES));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function normalizePlan(value: unknown): ApiKeyPlan {
+  return (API_KEY_PLANS as readonly string[]).includes(value as string)
+    ? (value as ApiKeyPlan)
+    : 'pro';
+}
+
+function apiKeyFromRequest(req: Request, body?: any): string | undefined {
+  const header =
+    req.headers.get('x-promptscope-api-key') ??
+    req.headers.get('x-api-key');
+  const candidate = normalizeLicenseKey(header ?? body?.api_key ?? body?.apiKey);
+  if (candidate) return candidate;
+  // Allow `Authorization: Bearer psk_...` as long as it is actually an API key
+  // (so it is never confused with the admin token).
+  const auth = req.headers.get('authorization');
+  if (auth && /^Bearer\s+/i.test(auth)) {
+    const bearer = auth.replace(/^Bearer\s+/i, '').trim();
+    if (bearer.startsWith(API_KEY_PREFIX)) return bearer;
+  }
+  return undefined;
+}
+
+async function issueApiKey(env: Env, opts: { label?: string; plan?: unknown }): Promise<{ key: string; record: ApiKeyRecord }> {
+  const key = `${API_KEY_PREFIX}${randomKeySuffix()}`;
+  const hash = await sha256Hex(key);
+  const record: ApiKeyRecord = {
+    id: hash.slice(0, 16),
+    label: opts.label ? opts.label.slice(0, MAX_API_KEY_LABEL_CHARS) : undefined,
+    plan: normalizePlan(opts.plan),
+    createdAt: new Date().toISOString(),
+  };
+  await env.PROMPTSCOPE_PRO_TOKENS.put(`${API_KEY_RECORD_PREFIX}${hash}`, JSON.stringify(record));
+  return { key, record };
+}
+
+async function verifyApiKey(key: string | undefined, env: Env): Promise<ApiKeyAuth | undefined> {
+  if (!key || !key.startsWith(API_KEY_PREFIX)) return undefined;
+  const hash = await sha256Hex(key);
+  const raw = await env.PROMPTSCOPE_PRO_TOKENS.get(`${API_KEY_RECORD_PREFIX}${hash}`).catch(() => null);
+  if (!raw) return undefined;
+  let record: ApiKeyRecord;
+  try { record = JSON.parse(raw) as ApiKeyRecord; } catch { return undefined; }
+  if (record.revoked) return undefined;
+  return { record, isPro: record.plan === 'pro' };
+}
+
+async function listApiKeys(env: Env): Promise<ApiKeyRecord[]> {
+  const records: ApiKeyRecord[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.PROMPTSCOPE_PRO_TOKENS.list({ prefix: API_KEY_RECORD_PREFIX, cursor });
+    for (const entry of page.keys) {
+      const raw = await env.PROMPTSCOPE_PRO_TOKENS.get(entry.name).catch(() => null);
+      if (!raw) continue;
+      try { records.push(JSON.parse(raw) as ApiKeyRecord); } catch {}
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+// Revokes by public id. Returns true if a matching key was found and revoked.
+async function revokeApiKey(env: Env, id: string): Promise<boolean> {
+  let cursor: string | undefined;
+  do {
+    const page = await env.PROMPTSCOPE_PRO_TOKENS.list({ prefix: API_KEY_RECORD_PREFIX, cursor });
+    for (const entry of page.keys) {
+      const raw = await env.PROMPTSCOPE_PRO_TOKENS.get(entry.name).catch(() => null);
+      if (!raw) continue;
+      let record: ApiKeyRecord;
+      try { record = JSON.parse(raw) as ApiKeyRecord; } catch { continue; }
+      if (record.id !== id) continue;
+      await env.PROMPTSCOPE_PRO_TOKENS.put(entry.name, JSON.stringify({ ...record, revoked: true }));
+      return true;
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return false;
 }
 
 function newId(): string {
@@ -283,10 +435,11 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
     return Response.json({
       description: 'PromptScope analyze API',
       method: 'POST /api/analyze',
-      body: { prompt: 'string up to 32k chars', license_key: 'optional Lemon Squeezy license key' },
-      auth_header_optional: 'x-promptscope-license',
+      body: { prompt: 'string up to 32k chars', license_key: 'optional Lemon Squeezy license key', api_key: 'optional first-party API key (psk_...)' },
+      auth_headers_optional: ['x-promptscope-api-key', 'x-promptscope-license'],
       license_endpoint: 'POST /api/license',
-      free_limit: '5 / IP / day',
+      keys_endpoint: 'POST /api/keys (admin) to issue first-party API keys',
+      free_limit: '5 / day (per API key, else per IP)',
       advanced_features: ['suggested_rewrite'],
       upgrade_url: upgradeHref(env),
     });
@@ -303,12 +456,17 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
   }
 
   const licenseAccess = await validateLemonLicense(licenseKeyFromRequest(req, body), env);
-  const isPro = licenseAccess.isPro;
+  const apiKeyAuth = await verifyApiKey(apiKeyFromRequest(req, body), env);
+  const isPro = licenseAccess.isPro || (apiKeyAuth?.isPro ?? false);
 
   let remaining: number | undefined;
   if (!isPro) {
-    const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
-    const rl = await rateCheck(ip, env);
+    // Identified API keys get their own per-key quota bucket; anonymous callers
+    // fall back to per-IP limiting.
+    const bucket = apiKeyAuth
+      ? `key:${apiKeyAuth.record.id}`
+      : `ip:${req.headers.get('cf-connecting-ip') ?? 'unknown'}`;
+    const rl = await rateCheck(bucket, env);
     if (!rl.allowed) {
       return Response.json({
         error: 'daily free quota exhausted; upgrade to Pro for unlimited analysis',
@@ -365,6 +523,11 @@ async function handleAnalyze(req: Request, env: Env): Promise<Response> {
     token_count: approxTokens(prompt),
     char_count: prompt.length,
     plan: isPro ? 'pro' : 'free',
+    auth: apiKeyAuth
+      ? { method: 'api_key', key_id: apiKeyAuth.record.id, plan: apiKeyAuth.record.plan }
+      : licenseAccess.isPro
+        ? { method: 'license', plan: 'pro' }
+        : { method: 'none', plan: 'free' },
     anti_patterns: Array.isArray(parsed.anti_patterns) ? parsed.anti_patterns.slice(0, 12) : [],
     strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 8) : [],
     advanced_features: {
@@ -440,17 +603,68 @@ async function handleCheckout(req: Request, env: Env): Promise<Response> {
   return new Response('method not allowed', { status: 405 });
 }
 
+async function handleKeys(req: Request, env: Env): Promise<Response> {
+  // GET docs are public; mutating/listing operations require the admin token.
+  if (req.method === 'GET' && !adminTokenFromRequest(req)) {
+    return Response.json({
+      description: 'PromptScope API-key administration',
+      auth: 'Authorization: Bearer <ADMIN_TOKEN>  (or x-promptscope-admin header)',
+      operations: {
+        issue: 'POST /api/keys  body: {"label"?: string, "plan"?: "free"|"pro"}  -> returns plaintext key ONCE',
+        list: 'GET /api/keys  -> key metadata (never the plaintext key)',
+        revoke: 'DELETE /api/keys  body: {"id": "<key id>"}',
+      },
+      usage: 'Send issued keys to /api/analyze as `x-promptscope-api-key: psk_...` or `Authorization: Bearer psk_...`',
+      configured: Boolean(env.ADMIN_TOKEN?.trim()),
+    });
+  }
+
+  const denied = requireAdmin(req, env);
+  if (denied) return denied;
+
+  if (req.method === 'GET') {
+    return Response.json({ keys: await listApiKeys(env) });
+  }
+
+  if (req.method === 'POST') {
+    const body = await req.json().catch(() => null) as { label?: unknown; plan?: unknown } | null;
+    const label = typeof body?.label === 'string' ? body.label : undefined;
+    const { key, record } = await issueApiKey(env, { label, plan: body?.plan });
+    return Response.json({
+      api_key: key,
+      note: 'Store this now — it is shown only once and cannot be recovered.',
+      ...record,
+    }, { status: 201 });
+  }
+
+  if (req.method === 'DELETE') {
+    const body = await req.json().catch(() => null) as { id?: unknown } | null;
+    const id = typeof body?.id === 'string' ? body.id.trim() : '';
+    if (!id) return Response.json({ error: 'missing key id' }, { status: 400 });
+    const revoked = await revokeApiKey(env, id);
+    if (!revoked) return Response.json({ error: 'key not found' }, { status: 404 });
+    return Response.json({ revoked: true, id });
+  }
+
+  return new Response('method not allowed', { status: 405 });
+}
+
 function handleApiIndex(env: Env): Response {
   return Response.json({
     name: 'PromptScope API',
     endpoints: {
       analyze: 'POST /api/analyze',
       license: 'POST /api/license',
+      keys: 'GET|POST|DELETE /api/keys (admin)',
       share: 'POST /api/share',
       checkout: 'GET /api/checkout',
     },
-    free_limit: '5 / IP / day',
-    pro_auth_header: 'x-promptscope-license',
+    free_limit: '5 / day (per API key, else per IP)',
+    auth: {
+      api_key_header: 'x-promptscope-api-key',
+      license_header: 'x-promptscope-license',
+      admin: 'Authorization: Bearer <ADMIN_TOKEN> on /api/keys',
+    },
     upgrade_url: upgradeHref(env),
   });
 }
@@ -462,6 +676,7 @@ export default {
     if (url.pathname === '/api') return handleApiIndex(env);
     if (url.pathname === '/api/analyze') return handleAnalyze(req, env);
     if (url.pathname === '/api/license') return handleLicense(req, env);
+    if (url.pathname === '/api/keys') return handleKeys(req, env);
     if (url.pathname === '/api/share') return handleShare(req, env);
     if (url.pathname === '/api/checkout') return handleCheckout(req, env);
 

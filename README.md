@@ -67,6 +67,74 @@ curl https://promptscope.ivixivi.workers.dev/api/analyze \
   -d '{"prompt":"You are a helpful assistant."}'
 ```
 
+## Auth & first-party API keys
+
+Two independent ways to authenticate to the API:
+
+1. **Lemon Squeezy license key** — for paying customers (`x-promptscope-license`).
+2. **First-party API keys** (`psk_...`) — issued by you, the operator, for CLI
+   scripts, internal services, or partners. Verified on `/api/analyze`.
+
+API keys are administered through `/api/keys`, which is gated by a single
+secret, `ADMIN_TOKEN`. Configure it once:
+
+```bash
+# Production — stored encrypted by Cloudflare, never in the repo:
+wrangler secret put ADMIN_TOKEN
+
+# Local dev — copy the template and fill it in (.dev.vars is gitignored):
+cp .dev.vars.example .dev.vars
+```
+
+If `ADMIN_TOKEN` is unset, `/api/keys` returns `503` and no keys can be issued —
+the rest of the app keeps working.
+
+**Issue a key** (returns the plaintext `psk_...` exactly once — store it now):
+
+```bash
+curl -X POST https://promptscope.ivixivi.workers.dev/api/keys \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"ci-pipeline","plan":"pro"}'
+# -> {"api_key":"psk_...","id":"<id>","plan":"pro","createdAt":"..."}
+```
+
+`plan` is `pro` (unlimited + suggested rewrites) or `free` (5 analyses/day, metered
+per key instead of per IP); it defaults to `pro`.
+
+**List keys** (metadata only — the plaintext key is never recoverable) and
+**revoke** by id:
+
+```bash
+curl https://promptscope.ivixivi.workers.dev/api/keys \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+curl -X DELETE https://promptscope.ivixivi.workers.dev/api/keys \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"<key id>"}'
+```
+
+**Call the API with an issued key** — either header form works:
+
+```bash
+curl https://promptscope.ivixivi.workers.dev/api/analyze \
+  -H "Content-Type: application/json" \
+  -H "x-promptscope-api-key: $PROMPTSCOPE_API_KEY" \
+  -d '{"prompt":"You are a helpful assistant."}'
+# or: -H "Authorization: Bearer $PROMPTSCOPE_API_KEY"
+```
+
+Keys are stored only as SHA-256 hashes in the `PROMPTSCOPE_PRO_TOKENS` KV
+namespace; the plaintext never touches storage or logs. A revoked key fails
+verification immediately and the caller falls back to the anonymous free tier.
+
+Run the auth smoke test (no external deps, needs Node ≥ 23):
+
+```bash
+npm test
+```
+
 Deploy:
 
 ```bash
