@@ -5,8 +5,9 @@
   "license": "MIT",
   "description": "Free + paid LLM system-prompt analyzer. Cloudflare Pages + Workers AI.",
   "scripts": {
-    "dev": "wrangler pages dev public --compatibility-date=2026-04-01 --compatibility-flags=nodejs_compat",
-    "deploy": "wrangler pages deploy public --project-name=promptscope --commit-dirty=true",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit --target es2022 --lib es2022,webworker --types @cloudflare/workers-types src/index.ts",
     "kv:create": "scripts/kv-bootstrap.sh"
   },
   "devDependencies": {

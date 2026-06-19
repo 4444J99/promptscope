@@ -23,19 +23,16 @@ Runs on Cloudflare Workers AI. The prompt is not stored unless a share-link is g
 | Suggested rewrites         | —    | ✓ |
 | API access                 | —    | ✓ |
 | Shareable permalinks       | ✓    | ✓ |
-| Side-by-side comparison    | —    | ✓ |
-| Team workspace             | —    | ✓ |
 | **Price**                  | $0   | **$19 / month** |
 
-**Pay any rail:** GitHub Sponsors, crypto, BMC, latent Stripe.
+**Checkout:** Lemon Squeezy. Pro access is unlocked by a Lemon Squeezy license key.
 
 ## Stack
 
 - Cloudflare Workers (compute + assets)
 - Cloudflare Workers AI — `@cf/meta/llama-3.3-70b-instruct-fp8-fast`
-- Cloudflare KV — rate limiting, share permalinks, pro authValues
-- Stripe Checkout (latent) for Pro subscriptions
-- USDC for crypto fallback
+- Cloudflare KV — rate limiting, share permalinks, short-lived license validation cache
+- Lemon Squeezy License API — Pro license validation
 
 ## Self-host
 
@@ -48,8 +45,31 @@ daily free quota that covers light hobbyist use.
 wrangler kv namespace create RATE_KV
 wrangler kv namespace create SHARE_KV
 wrangler kv namespace create PROMPTSCOPE_PRO_TOKENS
+```
 
-# Deploy
+Configure the Lemon Squeezy upgrade link:
+
+```toml
+[vars]
+LEMONSQUEEZY_CHECKOUT_URL = "https://your-store.lemonsqueezy.com/buy/..."
+
+# Optional, but recommended for production:
+LEMONSQUEEZY_PRODUCT_ID = "123456"
+LEMONSQUEEZY_VARIANT_ID = "123456"
+```
+
+Pro API calls use the license header:
+
+```bash
+curl https://promptscope.ivixivi.workers.dev/api/analyze \
+  -H "Content-Type: application/json" \
+  -H "x-promptscope-license: $LEMONSQUEEZY_LICENSE_KEY" \
+  -d '{"prompt":"You are a helpful assistant."}'
+```
+
+Deploy:
+
+```bash
 wrangler deploy
 ```
 

@@ -24,7 +24,7 @@ body {
 }
 
 header { text-align: center; margin-bottom: 32px; }
-header h1 { font-size: 36px; letter-spacing: -0.02em; }
+header h1 { font-size: 36px; letter-spacing: 0; }
 .tagline { color: var(--muted); margin-top: 6px; font-size: 18px; }
 
 main > section { margin-bottom: 36px; }
@@ -50,7 +50,8 @@ textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
   margin-top: 12px;
 }
 
-button {
+button,
+.button-link {
   background: var(--accent);
   color: white;
   border: 0;
@@ -59,11 +60,51 @@ button {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+  text-decoration: none;
 }
-button:hover { filter: brightness(1.1); }
+button:hover,
+.button-link:hover { filter: brightness(1.1); text-decoration: none; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary,
+.button-link.secondary {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
 
 .quota { color: var(--muted); font-size: 13px; }
+
+.license-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.license-bar input {
+  flex: 1 1 260px;
+  min-width: 0;
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
+.license-bar input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.license-status {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+.license-status.good { color: var(--good); }
+.license-status.bad { color: var(--bad); }
 
 #results {
   background: var(--card);
@@ -81,14 +122,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .score-num {
   font-size: 64px;
   font-weight: 700;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
   color: var(--accent);
 }
 .score-label { font-size: 24px; color: var(--muted); }
 
 .metrics { display: flex; gap: 18px; margin-bottom: 24px; color: var(--muted); font-size: 13px; }
 
-#results h2 { font-size: 14px; text-transform: uppercase; color: var(--muted); margin: 20px 0 8px; letter-spacing: 0.04em; }
+#results h2 { font-size: 14px; text-transform: uppercase; color: var(--muted); margin: 20px 0 8px; letter-spacing: 0; }
 
 .finding-list { list-style: none; }
 .finding-list li {
@@ -110,6 +151,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   white-space: pre-wrap;
   word-wrap: break-word;
   color: var(--fg);
+}
+
+.upgrade-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 8px;
 }
 
 .lock-tag {
@@ -136,26 +183,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .upgrade-card li { margin: 6px 0; }
 .upgrade-card .alt-pay { color: var(--muted); font-size: 13px; margin-top: 12px; }
 .upgrade-card code { font-family: ui-monospace, monospace; background: var(--card); padding: 2px 6px; border-radius: 4px; }
-
-.rails {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px;
-  font-size: 13px;
-}
-.rails .row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.rails .row:last-child { border: 0; }
-.rails .label { color: var(--muted); min-width: 120px; }
-.rails .val { font-family: ui-monospace, monospace; font-size: 12px; color: var(--fg); word-break: break-all; }
 
 #why p { margin: 8px 0; color: var(--muted); }
 
