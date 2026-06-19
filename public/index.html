@@ -4,14 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PromptScope — analyze your LLM system prompts</title>
-<meta name="description" content="Paste a system prompt and get back a structured analysis: anti-patterns, token count, score, suggested fixes. Free tier 5 analyses/day. Built for AI engineers shipping production prompts.">
+<meta name="description" content="Paste a system prompt and get back a structured analysis: anti-patterns, token count, score, suggested fixes. Free tier 5 analyses/day. Pro unlocks Lemon Squeezy licensed rewrites.">
 <meta property="og:title" content="PromptScope">
 <meta property="og:description" content="Free LLM prompt analyzer. Catches anti-patterns, suggests fixes.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://promptscope.pages.dev">
+<meta property="og:url" content="https://promptscope.ivixivi.workers.dev">
 <meta name="twitter:card" content="summary">
 <link rel="stylesheet" href="/styles.css">
-<link rel="canonical" href="https://promptscope.pages.dev/">
+<link rel="canonical" href="https://promptscope.ivixivi.workers.dev/">
 <script type="application/ld+json">
 {
   "@context":"https://schema.org",
@@ -43,6 +43,14 @@ e.g.,
       <button id="analyze-btn">Analyze</button>
       <span id="quota" class="quota">5 free analyses / day</span>
     </div>
+
+    <div class="license-bar">
+      <input id="license-key" type="password" placeholder="Lemon Squeezy license key" autocomplete="off" spellcheck="false">
+      <button id="license-save-btn" type="button">Save license</button>
+      <button id="license-clear-btn" type="button" class="secondary" hidden>Clear</button>
+      <a data-upgrade-link class="button-link secondary" href="/api/checkout" target="_blank" rel="noopener">Upgrade</a>
+    </div>
+    <p id="license-status" class="license-status" aria-live="polite"></p>
   </section>
 
   <section id="results" hidden>
@@ -63,6 +71,7 @@ e.g.,
 
     <h2>Suggested rewrite <span class="lock-tag" id="rewrite-lock" hidden>(Pro)</span></h2>
     <pre id="rewrite-block" class="rewrite"></pre>
+    <p id="rewrite-upsell" class="upgrade-note" hidden><a data-upgrade-link href="/api/checkout" target="_blank" rel="noopener">Upgrade with Lemon Squeezy</a> to unlock rewrite suggestions.</p>
 
     <div id="share-row" class="share-row">
       <button id="share-btn">Get shareable link</button>
@@ -75,32 +84,11 @@ e.g.,
     <ul>
       <li>Unlimited analyses (free is 5/day per IP)</li>
       <li>Suggested rewrites for every analysis</li>
-      <li>API access for your CI / prompt-pipelines</li>
-      <li>Side-by-side comparison of two prompt versions</li>
-      <li>Team workspace for shared review</li>
+      <li>API access with <code>x-promptscope-license</code></li>
+      <li>Lemon Squeezy license validation in the Worker</li>
     </ul>
-    <button id="upgrade-btn">Get Pro</button>
-    <button id="upgrade-usdc-btn" onclick="upgrade('pro')" style="margin-left:8px">Upgrade to Pro — pay with USDC ($19)</button>
-    <p class="alt-pay">Or pay with crypto (USDC on Base): <code id="crypto-addr">checking…</code></p>
-  </section>
-
-  <section id="checkout" class="upgrade-card" style="display:none">
-    <h2 id="checkout-title">Upgrade to Pro — $19</h2>
-    <p class="alt-pay" id="checkout-sub" style="margin-top:0">Pay once with USDC on Base. Send the exact amount to the address below using the quote id as your memo, then paste your transaction hash to unlock. No card, no account.</p>
-    <div id="co-quote" style="display:none;margin-top:14px">
-      <div class="rails">
-        <div class="row"><span class="label">Amount</span><span class="val" id="q-amount"></span></div>
-        <div class="row"><span class="label">Asset / chain</span><span class="val" id="q-asset"></span></div>
-        <div class="row"><span class="label">Send to</span><span class="val" id="q-address"></span><button onclick="copyAddr()" id="q-copy" style="font-size:11px;padding:4px 8px">copy</button></div>
-        <div class="row"><span class="label">Memo (quote id)</span><span class="val" id="q-quote"></span></div>
-      </div>
-      <p class="alt-pay" id="q-instructions" style="margin-top:8px"></p>
-      <div class="share-row" style="margin-top:10px">
-        <input id="co-tx" type="text" placeholder="0x… transaction hash">
-        <button onclick="confirmTx()" id="co-confirm-btn">I've sent it — unlock</button>
-      </div>
-    </div>
-    <p style="font-size:13px;margin-top:10px" id="co-msg"></p>
+    <a id="upgrade-btn" data-upgrade-link class="button-link" href="/api/checkout" target="_blank" rel="noopener">Upgrade with Lemon Squeezy</a>
+    <p class="alt-pay">After checkout, paste your license key above to unlock Pro analysis.</p>
   </section>
 
   <section id="why">
@@ -113,7 +101,7 @@ e.g.,
     <h2>FAQ</h2>
     <details><summary>Is my prompt sent to a third party?</summary><p>Analysis runs on Cloudflare Workers AI (Llama 3.3 / Mistral). Prompts are not stored unless you use the share-link feature, which creates an opaque permalink visible only to those you share with. Default: ephemeral, no logging.</p></details>
     <details><summary>What anti-patterns does it look for?</summary><p>Vague instructions, role contradictions, missing output schemas, persona-before-task ordering, capability over-claims, walls-of-text without structure, missing examples, missing constraints, hidden tool-use assumptions.</p></details>
-    <details><summary>Why a paid tier?</summary><p>The free tier covers light usage. Pro funds the inference compute and pays for ongoing development. Pro users also get the rewrite suggestions, API access, and team features.</p></details>
+    <details><summary>Why a paid tier?</summary><p>The free tier covers light usage. Pro funds the inference compute and pays for ongoing development. Pro users also get rewrite suggestions and API access.</p></details>
     <details><summary>Open source?</summary><p>Yes — <a href="https://github.com/4444J99/promptscope" rel="noopener">github.com/4444J99/promptscope</a> (MIT). Self-host if you prefer.</p></details>
   </section>
 </main>
