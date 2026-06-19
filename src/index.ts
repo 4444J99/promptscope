@@ -7,7 +7,7 @@
  *   - /api/keys — first-party API-key issuance + verification (admin-gated)
  */
 
-interface Env {
+export interface Env {
   AI: any;
   ASSETS: Fetcher;
   RATE_KV: KVNamespace;
@@ -25,11 +25,11 @@ interface Env {
   ADMIN_TOKEN?: string;
 }
 
-const FREE_DAILY_LIMIT = 5;
-const MAX_PROMPT_CHARS = 32_000;
-const SHARE_TTL_SECONDS = 60 * 60 * 24 * 30;
-const LICENSE_CACHE_TTL_SECONDS = 10 * 60;
-const MAX_LICENSE_KEY_CHARS = 256;
+export const FREE_DAILY_LIMIT = 5;
+export const MAX_PROMPT_CHARS = 32_000;
+export const SHARE_TTL_SECONDS = 60 * 60 * 24 * 30;
+export const LICENSE_CACHE_TTL_SECONDS = 10 * 60;
+export const MAX_LICENSE_KEY_CHARS = 256;
 const LEMON_LICENSE_VALIDATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/validate';
 
 // First-party API keys: issued by an admin, verified on the primary endpoints.
@@ -136,7 +136,7 @@ interface LicenseAccess {
   error?: string;
 }
 
-function approxTokens(s: string): number { return Math.ceil(s.length / 4); }
+export function approxTokens(s: string): number { return Math.ceil(s.length / 4); }
 
 function todayUtc(): string { return new Date().toISOString().slice(0, 10); }
 
@@ -184,7 +184,7 @@ function recentDates(days: number): string[] {
   return out;
 }
 
-function tryParseJson(s: unknown): any | null {
+export function tryParseJson(s: unknown): any | null {
   if (s == null) return null;
   // Workers AI may return objects directly when response_format is JSON.
   if (typeof s === 'object') return s;
@@ -193,24 +193,24 @@ function tryParseJson(s: unknown): any | null {
   try { return JSON.parse(cleaned); } catch { return null; }
 }
 
-function upgradeUrl(env: Env): string | undefined {
+export function upgradeUrl(env: Env): string | undefined {
   const value = env.LEMONSQUEEZY_CHECKOUT_URL?.trim();
   if (!value) return undefined;
   return /^https:\/\/.+/i.test(value) ? value : undefined;
 }
 
-function upgradeHref(env: Env): string {
+export function upgradeHref(env: Env): string {
   return upgradeUrl(env) ?? '/api/checkout';
 }
 
-function normalizeLicenseKey(value: unknown): string | undefined {
+export function normalizeLicenseKey(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   return trimmed;
 }
 
-function licenseKeyFromRequest(req: Request, body?: any): string | undefined {
+export function licenseKeyFromRequest(req: Request, body?: any): string | undefined {
   return normalizeLicenseKey(
     req.headers.get('x-promptscope-license') ??
     req.headers.get('x-promptscope-key') ??
@@ -220,12 +220,12 @@ function licenseKeyFromRequest(req: Request, body?: any): string | undefined {
   );
 }
 
-async function sha256Hex(value: string): Promise<string> {
+export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function configuredIds(primary?: string, csv?: string): Set<string> {
+export function configuredIds(primary?: string, csv?: string): Set<string> {
   const values = [
     ...(primary ? [primary] : []),
     ...(csv ? csv.split(/[,\s]+/) : []),
@@ -235,13 +235,13 @@ function configuredIds(primary?: string, csv?: string): Set<string> {
   return new Set(values);
 }
 
-function idAllowed(actual: number | string | undefined, allowed: Set<string>): boolean {
+export function idAllowed(actual: number | string | undefined, allowed: Set<string>): boolean {
   if (allowed.size === 0) return true;
   if (actual == null) return false;
   return allowed.has(String(actual));
 }
 
-function licenseScopeError(data: LemonValidateResponse, env: Env): string | undefined {
+export function licenseScopeError(data: LemonValidateResponse, env: Env): string | undefined {
   const productIds = configuredIds(env.LEMONSQUEEZY_PRODUCT_ID, env.LEMONSQUEEZY_ALLOWED_PRODUCT_IDS);
   const variantIds = configuredIds(env.LEMONSQUEEZY_VARIANT_ID, env.LEMONSQUEEZY_ALLOWED_VARIANT_IDS);
 
@@ -250,13 +250,13 @@ function licenseScopeError(data: LemonValidateResponse, env: Env): string | unde
   return undefined;
 }
 
-function licenseExpired(expiresAt: string | null | undefined): boolean {
+export function licenseExpired(expiresAt: string | null | undefined): boolean {
   if (!expiresAt) return false;
   const expiresMs = Date.parse(expiresAt);
   return Number.isFinite(expiresMs) && expiresMs <= Date.now();
 }
 
-function publicLicense(access: LicenseAccess): Record<string, unknown> | undefined {
+export function publicLicense(access: LicenseAccess): Record<string, unknown> | undefined {
   if (!access.isPro && !access.error) return undefined;
   if (!access.isPro) return { valid: false, error: access.error };
   return {
@@ -269,7 +269,7 @@ function publicLicense(access: LicenseAccess): Record<string, unknown> | undefin
   };
 }
 
-async function readCachedLicense(env: Env, cacheKey: string): Promise<LicenseAccess | undefined> {
+export async function readCachedLicense(env: Env, cacheKey: string): Promise<LicenseAccess | undefined> {
   const raw = await env.PROMPTSCOPE_PRO_TOKENS.get(cacheKey).catch(() => null);
   if (!raw) return undefined;
   try {
@@ -279,7 +279,7 @@ async function readCachedLicense(env: Env, cacheKey: string): Promise<LicenseAcc
   return undefined;
 }
 
-async function cacheLicense(env: Env, cacheKey: string, access: LicenseAccess): Promise<void> {
+export async function cacheLicense(env: Env, cacheKey: string, access: LicenseAccess): Promise<void> {
   if (!access.isPro) return;
   const expiryMs = access.expiresAt ? Date.parse(access.expiresAt) : NaN;
   const secondsUntilExpiry = Number.isFinite(expiryMs)
@@ -296,7 +296,7 @@ async function cacheLicense(env: Env, cacheKey: string, access: LicenseAccess): 
   }), { expirationTtl: ttl }).catch(() => undefined);
 }
 
-async function validateLemonLicense(licenseKey: string | undefined, env: Env): Promise<LicenseAccess> {
+export async function validateLemonLicense(licenseKey: string | undefined, env: Env): Promise<LicenseAccess> {
   if (!licenseKey) return { isPro: false };
   if (licenseKey.length > MAX_LICENSE_KEY_CHARS) {
     return { isPro: false, error: 'license key is too long' };
@@ -352,7 +352,7 @@ async function validateLemonLicense(licenseKey: string | undefined, env: Env): P
   return access;
 }
 
-async function rateCheck(bucket: string, env: Env): Promise<{ allowed: boolean; remaining: number }> {
+export async function rateCheck(bucket: string, env: Env): Promise<{ allowed: boolean; remaining: number }> {
   const key = `rl:${bucket}:${new Date().toISOString().slice(0, 10)}`;
   const current = Number(await env.RATE_KV.get(key) ?? 0);
   if (current >= FREE_DAILY_LIMIT) return { allowed: false, remaining: 0 };
@@ -484,12 +484,12 @@ async function revokeApiKey(env: Env, id: string): Promise<boolean> {
   return false;
 }
 
-function newId(): string {
+export function newId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(9));
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-async function handleAnalyze(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleAnalyze(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       description: 'PromptScope analyze API',
@@ -611,7 +611,7 @@ async function handleAnalyze(req: Request, env: Env, ctx: ExecutionContext): Pro
   });
 }
 
-async function handleLicense(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleLicense(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       auth_header: 'x-promptscope-license',
@@ -637,7 +637,7 @@ async function handleLicense(req: Request, env: Env, ctx: ExecutionContext): Pro
   }, { status });
 }
 
-async function handleShare(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleShare(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (req.method === 'POST') {
     let body: any;
     try { body = await req.json(); } catch { return Response.json({ error: 'invalid JSON' }, { status: 400 }); }
@@ -659,7 +659,7 @@ async function handleShare(req: Request, env: Env, ctx: ExecutionContext): Promi
   return new Response('method not allowed', { status: 405 });
 }
 
-async function handleCheckout(req: Request, env: Env): Promise<Response> {
+export async function handleCheckout(req: Request, env: Env): Promise<Response> {
   const url = upgradeUrl(env);
   if (!url) {
     return Response.json({
@@ -750,7 +750,7 @@ async function handleStats(req: Request, env: Env): Promise<Response> {
   }, { headers: { 'cache-control': 'public, max-age=60' } });
 }
 
-function handleApiIndex(env: Env): Response {
+export function handleApiIndex(env: Env): Response {
   return Response.json({
     name: 'PromptScope API',
     endpoints: {
