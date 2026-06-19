@@ -154,6 +154,20 @@ Deploy:
 wrangler deploy
 ```
 
+## Tests
+
+The Worker logic is covered by a unit suite that runs on Node's built-in test
+runner with native TypeScript support — no extra dependencies or `wrangler`
+needed. Cloudflare bindings (AI, KV, ASSETS) and the Lemon Squeezy API are
+faked in-memory (see `test/helpers.ts`).
+
+```bash
+npm test            # runs node --test over test/
+```
+
+Coverage spans the pure helpers, Lemon Squeezy license validation + caching,
+rate limiting, every `/api/*` handler, and the top-level request router.
+
 ## Sister products
 
 PromptScope is part of an intelligence portfolio:
