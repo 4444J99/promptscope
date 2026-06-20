@@ -16,10 +16,14 @@ export interface Env {
   // (prefix `ls:`) and first-party API-key records (prefix `ak:`).
   PROMPTSCOPE_PRO_TOKENS: KVNamespace;
   LEMONSQUEEZY_CHECKOUT_URL?: string;
+  LEMONSQUEEZY_API_KEY?: string;
+  LEMONSQUEEZY_STORE_ID?: string;
   LEMONSQUEEZY_PRODUCT_ID?: string;
   LEMONSQUEEZY_VARIANT_ID?: string;
   LEMONSQUEEZY_ALLOWED_PRODUCT_IDS?: string;
   LEMONSQUEEZY_ALLOWED_VARIANT_IDS?: string;
+  LEMONSQUEEZY_CHECKOUT_REDIRECT_URL?: string;
+  LEMONSQUEEZY_TEST_MODE?: string;
   // Shared secret that authorizes API-key administration (issue/list/revoke).
   // Set via `wrangler secret put ADMIN_TOKEN` (prod) or `.dev.vars` (local).
   ADMIN_TOKEN?: string;
@@ -31,6 +35,7 @@ export const SHARE_TTL_SECONDS = 60 * 60 * 24 * 30;
 export const LICENSE_CACHE_TTL_SECONDS = 10 * 60;
 export const MAX_LICENSE_KEY_CHARS = 256;
 const LEMON_LICENSE_VALIDATE_URL = 'https://api.lemonsqueezy.com/v1/licenses/validate';
+const LEMON_CHECKOUTS_URL = 'https://api.lemonsqueezy.com/v1/checkouts';
 
 // First-party API keys: issued by an admin, verified on the primary endpoints.
 // Plaintext keys look like `psk_<base64url>` and are NEVER stored — only the
@@ -136,6 +141,26 @@ interface LicenseAccess {
   error?: string;
 }
 
+interface LemonCheckoutResponse {
+  data?: {
+    attributes?: {
+      url?: string;
+    };
+  };
+  errors?: Array<{
+    title?: string;
+    detail?: string;
+    status?: string;
+  }>;
+}
+
+interface CheckoutInput {
+  email?: unknown;
+  name?: unknown;
+  discount_code?: unknown;
+  discountCode?: unknown;
+}
+
 export function approxTokens(s: string): number { return Math.ceil(s.length / 4); }
 
 function todayUtc(): string { return new Date().toISOString().slice(0, 10); }
@@ -163,16 +188,21 @@ async function recordSince(env: Env, date: string): Promise<void> {
   await env.RATE_KV.put(METRIC_META_KEY, JSON.stringify({ since: date })).catch(() => undefined);
 }
 
-// Fire-and-forget counter increments. Bundled onto ctx.waitUntil so they never
-// add latency to the user-facing response.
-function bumpMetrics(env: Env, ctx: ExecutionContext, deltas: MetricCounts): void {
+// Fire-and-forget counter increments. Bundled onto ctx.waitUntil when available
+// so they never add latency to the user-facing response.
+function bumpMetrics(env: Env, ctx: ExecutionContext | undefined, deltas: MetricCounts): void {
   if (Object.keys(deltas).length === 0) return;
   const date = todayUtc();
-  ctx.waitUntil(Promise.all([
+  const job = Promise.all([
     addCounts(env, METRIC_ALL_KEY, deltas),
     addCounts(env, metricDayKey(date), deltas, METRIC_TTL_SECONDS),
     recordSince(env, date),
-  ]).then(() => undefined));
+  ]).then(() => undefined);
+  if (typeof ctx?.waitUntil === 'function') {
+    ctx.waitUntil(job);
+  } else {
+    job.catch(() => undefined);
+  }
 }
 
 function recentDates(days: number): string[] {
@@ -201,6 +231,31 @@ export function upgradeUrl(env: Env): string | undefined {
 
 export function upgradeHref(env: Env): string {
   return upgradeUrl(env) ?? '/api/checkout';
+}
+
+function cleanString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function booleanFlag(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+export function dynamicCheckoutConfigured(env: Env): boolean {
+  return Boolean(
+    cleanString(env.LEMONSQUEEZY_API_KEY) &&
+    cleanString(env.LEMONSQUEEZY_STORE_ID) &&
+    cleanString(env.LEMONSQUEEZY_VARIANT_ID),
+  );
+}
+
+export function checkoutConfigured(env: Env): boolean {
+  return Boolean(upgradeUrl(env) || dynamicCheckoutConfigured(env));
 }
 
 export function normalizeLicenseKey(value: unknown): string | undefined {
@@ -254,6 +309,105 @@ export function licenseExpired(expiresAt: string | null | undefined): boolean {
   if (!expiresAt) return false;
   const expiresMs = Date.parse(expiresAt);
   return Number.isFinite(expiresMs) && expiresMs <= Date.now();
+}
+
+function absoluteCheckoutRedirectUrl(req: Request, env: Env): string {
+  const configured = cleanString(env.LEMONSQUEEZY_CHECKOUT_REDIRECT_URL);
+  if (configured) {
+    try {
+      const url = new URL(configured);
+      if (url.protocol === 'https:' || url.hostname === 'localhost') return url.toString();
+    } catch {}
+  }
+  return `${new URL(req.url).origin}/?checkout=success`;
+}
+
+function numericId(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+  const n = Number(value);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
+function lemonCheckoutPayload(req: Request, env: Env, input: CheckoutInput = {}): string {
+  const storeId = cleanString(env.LEMONSQUEEZY_STORE_ID) as string;
+  const variantId = cleanString(env.LEMONSQUEEZY_VARIANT_ID) as string;
+  const variantNumber = numericId(variantId);
+  const productOptions: Record<string, unknown> = {
+    redirect_url: absoluteCheckoutRedirectUrl(req, env),
+  };
+  if (variantNumber !== undefined) productOptions.enabled_variants = [variantNumber];
+
+  const checkoutData: Record<string, unknown> = {
+    custom: { app: 'promptscope' },
+  };
+  const email = cleanString(input.email);
+  const name = cleanString(input.name);
+  const discountCode = cleanString(input.discount_code ?? input.discountCode);
+  if (email) checkoutData.email = email;
+  if (name) checkoutData.name = name;
+  if (discountCode) checkoutData.discount_code = discountCode;
+
+  const attributes: Record<string, unknown> = {
+    product_options: productOptions,
+    checkout_data: checkoutData,
+  };
+  const testMode = booleanFlag(env.LEMONSQUEEZY_TEST_MODE);
+  if (testMode !== undefined) attributes.test_mode = testMode;
+
+  return JSON.stringify({
+    data: {
+      type: 'checkouts',
+      attributes,
+      relationships: {
+        store: { data: { type: 'stores', id: storeId } },
+        variant: { data: { type: 'variants', id: variantId } },
+      },
+    },
+  });
+}
+
+function checkoutErrorMessage(data: LemonCheckoutResponse | null, fallback: string): string {
+  const first = data?.errors?.[0];
+  return first?.detail ?? first?.title ?? fallback;
+}
+
+async function createLemonCheckout(req: Request, env: Env, input: CheckoutInput = {}): Promise<{ url?: string; error?: string; status?: number }> {
+  const apiKey = cleanString(env.LEMONSQUEEZY_API_KEY);
+  if (!apiKey || !dynamicCheckoutConfigured(env)) {
+    return {
+      status: 503,
+      error: 'dynamic Lemon Squeezy checkout is not configured',
+    };
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch(LEMON_CHECKOUTS_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.api+json',
+        'Content-Type': 'application/vnd.api+json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: lemonCheckoutPayload(req, env, input),
+    });
+  } catch {
+    return { status: 502, error: 'checkout provider unavailable' };
+  }
+
+  const data = await resp.json().catch(() => null) as LemonCheckoutResponse | null;
+  if (!resp.ok) {
+    return {
+      status: resp.status >= 400 && resp.status < 500 ? resp.status : 502,
+      error: checkoutErrorMessage(data, `checkout creation failed (${resp.status})`),
+    };
+  }
+
+  const url = cleanString(data?.data?.attributes?.url);
+  if (!url || !/^https:\/\/.+/i.test(url)) {
+    return { status: 502, error: 'checkout provider returned an invalid URL' };
+  }
+  return { url };
 }
 
 export function publicLicense(access: LicenseAccess): Record<string, unknown> | undefined {
@@ -661,15 +815,47 @@ export async function handleShare(req: Request, env: Env, ctx: ExecutionContext)
 
 export async function handleCheckout(req: Request, env: Env): Promise<Response> {
   const url = upgradeUrl(env);
-  if (!url) {
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return new Response('method not allowed', { status: 405 });
+  }
+
+  if (url) {
+    if (req.method === 'GET') return Response.redirect(url, 303);
+    return Response.json({ checkout_url: url, upgrade_url: url });
+  }
+
+  if (!dynamicCheckoutConfigured(env)) {
     return Response.json({
       error: 'upgrade link is not configured',
       required_var: 'LEMONSQUEEZY_CHECKOUT_URL',
+      alternative_required_vars: ['LEMONSQUEEZY_API_KEY', 'LEMONSQUEEZY_STORE_ID', 'LEMONSQUEEZY_VARIANT_ID'],
     }, { status: 503 });
   }
-  if (req.method === 'GET') return Response.redirect(url, 303);
-  if (req.method === 'POST') return Response.json({ checkout_url: url, upgrade_url: url });
-  return new Response('method not allowed', { status: 405 });
+
+  let body: CheckoutInput = {};
+  if (req.method === 'POST' && req.headers.get('content-type')?.toLowerCase().includes('json')) {
+    const parsed = await req.json().catch(() => null) as CheckoutInput | null;
+    if (!parsed || typeof parsed !== 'object') {
+      return Response.json({ error: 'invalid JSON' }, { status: 400 });
+    }
+    body = parsed;
+  }
+
+  const checkout = await createLemonCheckout(req, env, body);
+  if (!checkout.url) {
+    return Response.json({
+      error: checkout.error ?? 'checkout creation failed',
+      provider: 'lemonsqueezy',
+    }, { status: checkout.status ?? 502 });
+  }
+
+  if (req.method === 'GET') return Response.redirect(checkout.url, 303);
+  return Response.json({
+    checkout_url: checkout.url,
+    upgrade_url: checkout.url,
+    provider: 'lemonsqueezy',
+    mode: 'dynamic',
+  }, { headers: { 'cache-control': 'no-store' } });
 }
 
 async function handleKeys(req: Request, env: Env): Promise<Response> {
@@ -745,7 +931,7 @@ async function handleStats(req: Request, env: Env): Promise<Response> {
     daily,
     config: {
       free_daily_limit: FREE_DAILY_LIMIT,
-      pro_checkout_configured: Boolean(upgradeUrl(env)),
+      pro_checkout_configured: checkoutConfigured(env),
     },
   }, { headers: { 'cache-control': 'public, max-age=60' } });
 }

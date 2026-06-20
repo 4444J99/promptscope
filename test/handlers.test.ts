@@ -111,7 +111,7 @@ test('analyze returns 500 when inference throws', async () => {
 test('analyze (free) returns 429 once the daily quota is exhausted', async () => {
   const rate = fakeKV()
   const today = new Date().toISOString().slice(0, 10)
-  rate.store.set(`rl:9.9.9.9:${today}`, { value: String(FREE_DAILY_LIMIT) })
+  rate.store.set(`rl:ip:9.9.9.9:${today}`, { value: String(FREE_DAILY_LIMIT) })
   const env = makeEnv({ RATE_KV: rate as unknown as KVNamespace })
   const req = jsonReq('https://x.test/api/analyze', { prompt: 'p' }, { 'cf-connecting-ip': '9.9.9.9' })
   const res = await handleAnalyze(req, env)
@@ -284,6 +284,88 @@ test('checkout GET redirects and POST returns the URL when configured', async ()
 
   const put = await handleCheckout(new Request('https://x.test/api/checkout', { method: 'PUT' }), env)
   assert.equal(put.status, 405)
+})
+
+test('checkout POST creates a Lemon Squeezy checkout when API config is present', async () => {
+  const env = makeEnv({
+    LEMONSQUEEZY_API_KEY: 'lmsq_secret',
+    LEMONSQUEEZY_STORE_ID: '10',
+    LEMONSQUEEZY_VARIANT_ID: '20',
+    LEMONSQUEEZY_CHECKOUT_REDIRECT_URL: 'https://promptscope.test/checkout/success',
+    LEMONSQUEEZY_TEST_MODE: 'true',
+  })
+  const fetch = stubFetch((url, init) => {
+    assert.equal(url, 'https://api.lemonsqueezy.com/v1/checkouts')
+    assert.equal(init?.method, 'POST')
+    const headers = new Headers(init?.headers as HeadersInit)
+    assert.equal(headers.get('authorization'), 'Bearer lmsq_secret')
+    assert.equal(headers.get('accept'), 'application/vnd.api+json')
+    assert.equal(headers.get('content-type'), 'application/vnd.api+json')
+
+    const payload = JSON.parse(String(init?.body))
+    assert.equal(payload.data.type, 'checkouts')
+    assert.equal(payload.data.relationships.store.data.id, '10')
+    assert.equal(payload.data.relationships.variant.data.id, '20')
+    assert.equal(payload.data.attributes.product_options.redirect_url, 'https://promptscope.test/checkout/success')
+    assert.deepEqual(payload.data.attributes.product_options.enabled_variants, [20])
+    assert.equal(payload.data.attributes.checkout_data.email, 'buyer@example.com')
+    assert.equal(payload.data.attributes.checkout_data.discount_code, 'SAVE10')
+    assert.deepEqual(payload.data.attributes.checkout_data.custom, { app: 'promptscope' })
+    assert.equal(payload.data.attributes.test_mode, true)
+
+    return { data: { attributes: { url: 'https://store.test/checkout/custom/abc' } } }
+  })
+  try {
+    const res = await handleCheckout(jsonReq('https://x.test/api/checkout', {
+      email: 'buyer@example.com',
+      discount_code: 'SAVE10',
+    }), env)
+    assert.equal(res.status, 200)
+    assert.deepEqual(await res.json(), {
+      checkout_url: 'https://store.test/checkout/custom/abc',
+      upgrade_url: 'https://store.test/checkout/custom/abc',
+      provider: 'lemonsqueezy',
+      mode: 'dynamic',
+    })
+  } finally {
+    fetch.restore()
+  }
+})
+
+test('checkout GET redirects to a dynamically created Lemon Squeezy checkout', async () => {
+  const env = makeEnv({
+    LEMONSQUEEZY_API_KEY: 'lmsq_secret',
+    LEMONSQUEEZY_STORE_ID: '10',
+    LEMONSQUEEZY_VARIANT_ID: '20',
+  })
+  const fetch = stubFetch(() => ({ data: { attributes: { url: 'https://store.test/checkout/custom/get' } } }))
+  try {
+    const res = await handleCheckout(new Request('https://promptscope.test/api/checkout'), env)
+    assert.equal(res.status, 303)
+    assert.equal(res.headers.get('location'), 'https://store.test/checkout/custom/get')
+  } finally {
+    fetch.restore()
+  }
+})
+
+test('checkout surfaces Lemon Squeezy checkout creation errors without leaking secrets', async () => {
+  const env = makeEnv({
+    LEMONSQUEEZY_API_KEY: 'lmsq_secret',
+    LEMONSQUEEZY_STORE_ID: '10',
+    LEMONSQUEEZY_VARIANT_ID: '20',
+  })
+  const fetch = stubFetch(() => Response.json({
+    errors: [{ detail: 'Variant does not exist.' }],
+  }, { status: 422 }))
+  try {
+    const res = await handleCheckout(new Request('https://x.test/api/checkout'), env)
+    assert.equal(res.status, 422)
+    const body = await res.json()
+    assert.equal(body.error, 'Variant does not exist.')
+    assert.equal(JSON.stringify(body).includes('lmsq_secret'), false)
+  } finally {
+    fetch.restore()
+  }
 })
 
 test('handleApiIndex lists the endpoints and upgrade URL', async () => {

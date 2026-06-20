@@ -267,6 +267,13 @@ async function loadLicenseConfig() {
   } catch {}
 }
 
+function hydrateCheckoutReturn() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("checkout") !== "success") return;
+  setLicenseStatus("Checkout complete. Paste your Lemon Squeezy license key to unlock Pro.");
+  $("license-key").focus();
+}
+
 async function getShareLink() {
   const text = $("prompt-input").value.trim();
   if (!text) return;
@@ -324,6 +331,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   loadLicenseConfig().then(hydrateLicense);
+  hydrateCheckoutReturn();
 
   // Hydrate from /s/<id> path if shared.
   const m = window.location.pathname.match(/^\/s\/([a-zA-Z0-9_-]+)$/);
