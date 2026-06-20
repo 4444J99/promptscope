@@ -111,7 +111,7 @@ test('analyze returns 500 when inference throws', async () => {
 test('analyze (free) returns 429 once the daily quota is exhausted', async () => {
   const rate = fakeKV()
   const today = new Date().toISOString().slice(0, 10)
-  rate.store.set(`rl:9.9.9.9:${today}`, { value: String(FREE_DAILY_LIMIT) })
+  rate.store.set(`rl:ip:9.9.9.9:${today}`, { value: String(FREE_DAILY_LIMIT) })
   const env = makeEnv({ RATE_KV: rate as unknown as KVNamespace })
   const req = jsonReq('https://x.test/api/analyze', { prompt: 'p' }, { 'cf-connecting-ip': '9.9.9.9' })
   const res = await handleAnalyze(req, env)
@@ -123,7 +123,7 @@ test('analyze (pro) bypasses rate limiting and includes a suggested_rewrite', as
   // Quota already exhausted; a pro license must still succeed.
   const rate = fakeKV()
   const today = new Date().toISOString().slice(0, 10)
-  rate.store.set(`rl:1.1.1.1:${today}`, { value: String(FREE_DAILY_LIMIT) })
+  rate.store.set(`rl:ip:1.1.1.1:${today}`, { value: String(FREE_DAILY_LIMIT) })
   const env = makeEnv({ RATE_KV: rate as unknown as KVNamespace })
   const fetch = stubFetch(() => VALID_LICENSE)
   try {

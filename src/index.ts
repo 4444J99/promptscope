@@ -165,14 +165,16 @@ async function recordSince(env: Env, date: string): Promise<void> {
 
 // Fire-and-forget counter increments. Bundled onto ctx.waitUntil so they never
 // add latency to the user-facing response.
-function bumpMetrics(env: Env, ctx: ExecutionContext, deltas: MetricCounts): void {
+function bumpMetrics(env: Env, ctx: ExecutionContext | undefined, deltas: MetricCounts): void {
   if (Object.keys(deltas).length === 0) return;
   const date = todayUtc();
-  ctx.waitUntil(Promise.all([
+  const writeMetrics = Promise.all([
     addCounts(env, METRIC_ALL_KEY, deltas),
     addCounts(env, metricDayKey(date), deltas, METRIC_TTL_SECONDS),
     recordSince(env, date),
-  ]).then(() => undefined));
+  ]).then(() => undefined);
+  if (ctx?.waitUntil) ctx.waitUntil(writeMetrics);
+  else void writeMetrics;
 }
 
 function recentDates(days: number): string[] {
@@ -489,7 +491,7 @@ export function newId(): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export async function handleAnalyze(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleAnalyze(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       description: 'PromptScope analyze API',
@@ -611,7 +613,7 @@ export async function handleAnalyze(req: Request, env: Env, ctx: ExecutionContex
   });
 }
 
-export async function handleLicense(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleLicense(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   if (req.method === 'GET') {
     return Response.json({
       auth_header: 'x-promptscope-license',
@@ -637,7 +639,7 @@ export async function handleLicense(req: Request, env: Env, ctx: ExecutionContex
   }, { status });
 }
 
-export async function handleShare(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleShare(req: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   if (req.method === 'POST') {
     let body: any;
     try { body = await req.json(); } catch { return Response.json({ error: 'invalid JSON' }, { status: 400 }); }
