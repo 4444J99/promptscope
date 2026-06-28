@@ -3,7 +3,7 @@
  *
  * Single Worker handles:
  *   - Static assets (public/) via ASSETS binding
- *   - /api/analyze, /api/share, /api/license, /api/checkout
+ *   - /api/analyze, /api/share, /api/license, /api/account, /api/checkout
  */
 
 interface Env {
@@ -265,12 +265,37 @@ async function validateLemonLicense(licenseKey: string | undefined, env: Env): P
   return access;
 }
 
+function rateLimitKey(ip: string): string {
+  return `rl:${ip}:${new Date().toISOString().slice(0, 10)}`;
+}
+
+async function readFreeUsage(ip: string, env: Env): Promise<{ used: number; remaining: number; limit: number }> {
+  const stored = Number(await env.RATE_KV.get(rateLimitKey(ip)) ?? 0);
+  const used = Number.isFinite(stored) && stored > 0 ? Math.min(stored, FREE_DAILY_LIMIT) : 0;
+  return {
+    used,
+    remaining: Math.max(0, FREE_DAILY_LIMIT - used),
+    limit: FREE_DAILY_LIMIT,
+  };
+}
+
 async function rateCheck(ip: string, env: Env): Promise<{ allowed: boolean; remaining: number }> {
-  const key = `rl:${ip}:${new Date().toISOString().slice(0, 10)}`;
-  const current = Number(await env.RATE_KV.get(key) ?? 0);
+  const key = rateLimitKey(ip);
+  const stored = Number(await env.RATE_KV.get(key) ?? 0);
+  const current = Number.isFinite(stored) && stored > 0 ? stored : 0;
   if (current >= FREE_DAILY_LIMIT) return { allowed: false, remaining: 0 };
   await env.RATE_KV.put(key, String(current + 1), { expirationTtl: 60 * 60 * 26 });
   return { allowed: true, remaining: FREE_DAILY_LIMIT - current - 1 };
+}
+
+function accountEntitlements(isPro: boolean): Record<string, unknown> {
+  return {
+    analyses_per_day: isPro ? 'unlimited' : FREE_DAILY_LIMIT,
+    suggested_rewrite: isPro,
+    api_access: isPro,
+    shareable_permalinks: true,
+    max_prompt_chars: MAX_PROMPT_CHARS,
+  };
 }
 
 function newId(): string {
@@ -406,6 +431,45 @@ async function handleLicense(req: Request, env: Env): Promise<Response> {
   }, { status });
 }
 
+async function handleAccount(req: Request, env: Env): Promise<Response> {
+  if (req.method !== 'GET' && req.method !== 'POST') return new Response('method not allowed', { status: 405 });
+
+  let body: any;
+  if (req.method === 'POST') {
+    body = await req.json().catch(() => undefined);
+    if (body === undefined) return Response.json({ error: 'invalid JSON' }, { status: 400 });
+  }
+
+  const licenseKey = licenseKeyFromRequest(req, body);
+  const access = await validateLemonLicense(licenseKey, env);
+  const isPro = access.isPro;
+  const ip = req.headers.get('cf-connecting-ip') ?? 'unknown';
+  const freeUsage = isPro ? undefined : await readFreeUsage(ip, env);
+  const licenseInfo = publicLicense(access);
+  const origin = new URL(req.url).origin;
+
+  return Response.json({
+    plan: isPro ? 'pro' : 'free',
+    valid_license: isPro,
+    license: licenseInfo ?? { valid: false },
+    entitlements: accountEntitlements(isPro),
+    usage: isPro
+      ? { analyses_today: null, quota_remaining: null, quota_limit: null, quota_label: 'Unlimited' }
+      : {
+          analyses_today: freeUsage?.used ?? 0,
+          quota_remaining: freeUsage?.remaining ?? FREE_DAILY_LIMIT,
+          quota_limit: freeUsage?.limit ?? FREE_DAILY_LIMIT,
+        },
+    api: {
+      analyze_endpoint: `${origin}/api/analyze`,
+      auth_header: 'x-promptscope-license',
+      body: { prompt: `string up to ${MAX_PROMPT_CHARS} chars` },
+    },
+    upgrade_url: upgradeHref(env),
+    ...(access.error ? { license_error: access.error } : {}),
+  }, { status: access.error && licenseKey ? 401 : 200 });
+}
+
 async function handleShare(req: Request, env: Env): Promise<Response> {
   if (req.method === 'POST') {
     let body: any;
@@ -446,6 +510,7 @@ function handleApiIndex(env: Env): Response {
     endpoints: {
       analyze: 'POST /api/analyze',
       license: 'POST /api/license',
+      account: 'GET /api/account',
       share: 'POST /api/share',
       checkout: 'GET /api/checkout',
     },
@@ -462,6 +527,7 @@ export default {
     if (url.pathname === '/api') return handleApiIndex(env);
     if (url.pathname === '/api/analyze') return handleAnalyze(req, env);
     if (url.pathname === '/api/license') return handleLicense(req, env);
+    if (url.pathname === '/api/account') return handleAccount(req, env);
     if (url.pathname === '/api/share') return handleShare(req, env);
     if (url.pathname === '/api/checkout') return handleCheckout(req, env);
 

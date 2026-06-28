@@ -4,6 +4,7 @@
 const $ = (id) => document.getElementById(id);
 const LICENSE_STORAGE_KEY = "promptscope:license-key";
 let upgradeUrl = "/api/checkout";
+let latestApiExample = "";
 
 function storedLicenseKey() {
   return localStorage.getItem(LICENSE_STORAGE_KEY) || "";
@@ -41,6 +42,88 @@ function setProUi(active) {
   if (active) {
     $("quota").textContent = "Pro license active";
     setLicenseStatus("Pro license active", "good");
+  }
+}
+
+function formatLicenseDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function buildApiExample(data = {}) {
+  const endpoint = data.api?.analyze_endpoint || `${window.location.origin}/api/analyze`;
+  return `curl ${endpoint} \\
+  -H "Content-Type: application/json" \\
+  -H "x-promptscope-license: $PROMPTSCOPE_LICENSE_KEY" \\
+  -d '{"prompt":"You are a helpful assistant."}'`;
+}
+
+function renderDashboard(data = {}) {
+  const isPro = data.plan === "pro" && data.valid_license === true;
+  const license = data.license || {};
+  const usage = data.usage || {};
+  const entitlements = data.entitlements || {};
+
+  $("dashboard-plan").textContent = isPro ? "Pro" : "Free";
+  $("dashboard-license").textContent = isPro
+    ? (license.variant_name || license.status || "Valid")
+    : (data.license_error ? "Rejected" : "Not connected");
+  $("dashboard-usage").textContent = isPro
+    ? (usage.quota_label || "Unlimited")
+    : `${usage.quota_remaining ?? 5} / ${usage.quota_limit ?? 5} left`;
+  $("dashboard-api").textContent = entitlements.api_access ? "Enabled" : "Locked";
+
+  const detail = [license.product_name, license.variant_name].filter(Boolean).join(" / ");
+  const expires = formatLicenseDate(license.expires_at);
+  const message = isPro
+    ? [detail || "License validated", expires ? `Expires ${expires}` : ""].filter(Boolean).join(" - ")
+    : (data.license_error || "Free plan active");
+  const tone = isPro ? "good" : (data.license_error ? "bad" : "");
+  $("dashboard-message").textContent = message;
+  $("dashboard-message").className = `dashboard-message ${tone}`.trim();
+
+  $("api-panel").hidden = !isPro;
+  $("dashboard-upgrade").hidden = isPro;
+  latestApiExample = buildApiExample(data);
+  $("api-example").textContent = latestApiExample;
+  if (data.upgrade_url) setUpgradeLinks(data.upgrade_url);
+}
+
+async function refreshDashboard() {
+  const btn = $("dashboard-refresh-btn");
+  btn.disabled = true;
+  btn.textContent = "Refreshing...";
+  try {
+    const headers = {};
+    const licenseKey = storedLicenseKey();
+    if (licenseKey) headers["x-promptscope-license"] = licenseKey;
+
+    const r = await fetch("/api/account", { headers });
+    const data = await r.json();
+    renderDashboard(data);
+  } catch {
+    $("dashboard-message").textContent = "Account status unavailable.";
+    $("dashboard-message").className = "dashboard-message bad";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Refresh";
+  }
+}
+
+async function copyApiExample() {
+  const btn = $("copy-api-btn");
+  const text = latestApiExample || $("api-example").textContent;
+  if (!text) return;
+  try {
+    if (!navigator.clipboard) throw new Error("clipboard unavailable");
+    await navigator.clipboard.writeText(text);
+    btn.textContent = "Copied";
+  } catch {
+    btn.textContent = "Copy failed";
+  } finally {
+    setTimeout(() => { btn.textContent = "Copy cURL"; }, 1600);
   }
 }
 
@@ -149,10 +232,15 @@ async function saveLicense() {
 
     setStoredLicenseKey(key);
     setProUi(true);
+    await refreshDashboard();
   } catch (err) {
+    const message = err.message ?? "License is not valid.";
     setStoredLicenseKey("");
     $("license-clear-btn").hidden = true;
-    setLicenseStatus(err.message ?? "License is not valid.", "bad");
+    setLicenseStatus(message, "bad");
+    await refreshDashboard();
+    $("dashboard-message").textContent = message;
+    $("dashboard-message").className = "dashboard-message bad";
   } finally {
     btn.disabled = false;
     btn.textContent = "Save license";
@@ -165,6 +253,7 @@ function clearLicense() {
   $("license-clear-btn").hidden = true;
   $("quota").textContent = "5 free analyses / day";
   setLicenseStatus("License cleared.");
+  refreshDashboard();
 }
 
 async function hydrateLicense() {
@@ -234,11 +323,15 @@ document.addEventListener("DOMContentLoaded", () => {
   $("share-btn").addEventListener("click", getShareLink);
   $("license-save-btn").addEventListener("click", saveLicense);
   $("license-clear-btn").addEventListener("click", clearLicense);
+  $("dashboard-refresh-btn").addEventListener("click", refreshDashboard);
+  $("copy-api-btn").addEventListener("click", copyApiExample);
   $("license-key").addEventListener("keydown", (event) => {
     if (event.key === "Enter") saveLicense();
   });
 
-  loadLicenseConfig().then(hydrateLicense);
+  loadLicenseConfig().finally(() => {
+    hydrateLicense().finally(refreshDashboard);
+  });
 
   // Hydrate from /s/<id> path if shared.
   const m = window.location.pathname.match(/^\/s\/([a-zA-Z0-9_-]+)$/);

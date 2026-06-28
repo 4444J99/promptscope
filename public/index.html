@@ -53,6 +53,48 @@ e.g.,
     <p id="license-status" class="license-status" aria-live="polite"></p>
   </section>
 
+  <section id="account" class="dashboard-card" aria-labelledby="account-title">
+    <div class="section-header">
+      <div>
+        <h2 id="account-title">Account</h2>
+        <p id="dashboard-message" class="dashboard-message" aria-live="polite">Checking license status...</p>
+      </div>
+      <button id="dashboard-refresh-btn" type="button" class="secondary">Refresh</button>
+    </div>
+
+    <div class="dashboard-grid">
+      <div class="dashboard-stat">
+        <span>Plan</span>
+        <strong id="dashboard-plan">Free</strong>
+      </div>
+      <div class="dashboard-stat">
+        <span>License</span>
+        <strong id="dashboard-license">Not connected</strong>
+      </div>
+      <div class="dashboard-stat">
+        <span>Quota</span>
+        <strong id="dashboard-usage">5 left</strong>
+      </div>
+      <div class="dashboard-stat">
+        <span>API</span>
+        <strong id="dashboard-api">Locked</strong>
+      </div>
+    </div>
+
+    <div id="api-panel" class="api-panel" hidden>
+      <div class="api-panel-head">
+        <h3>Pro API</h3>
+        <button id="copy-api-btn" type="button" class="secondary">Copy cURL</button>
+      </div>
+      <pre id="api-example" class="api-example"></pre>
+    </div>
+
+    <div id="dashboard-upgrade" class="dashboard-upgrade">
+      <a data-upgrade-link class="button-link" href="/api/checkout" target="_blank" rel="noopener">Upgrade with Lemon Squeezy</a>
+      <span>Pro unlocks rewrites, unlimited analyses, and licensed API calls.</span>
+    </div>
+  </section>
+
   <section id="results" hidden>
     <div class="score-card">
       <div class="score-num" id="score-num">—</div>
@@ -107,7 +149,7 @@ e.g.,
 </main>
 
 <footer>
-  <p>PromptScope • <a href="https://github.com/4444J99/promptscope">GitHub</a> • <a href="/api">API</a> • <a href="/privacy">Privacy</a></p>
+  <p>PromptScope • <a href="#account">Account</a> • <a href="https://github.com/4444J99/promptscope">GitHub</a> • <a href="/api">API</a> • <a href="/privacy">Privacy</a></p>
   <p style="margin-top:10px">Sister products:</p>
   <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px">
     <a style="background:#fff;border:1px solid #e5e7eb;padding:4px 10px;border-radius:14px;font-size:12px;text-decoration:none;color:#111" href="https://edgarflash.ivixivi.workers.dev">EdgarFlash</a>
